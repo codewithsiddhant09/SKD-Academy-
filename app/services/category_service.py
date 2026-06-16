@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import httpx
 
 from app.core.config import get_settings
@@ -22,6 +24,45 @@ DEFAULT_CATEGORIES = [
 ]
 
 
+def _normalize_categories_payload(data: Any) -> list[dict[str, str]]:
+    """Parse category list from API JSON; return [] when shape is invalid."""
+    if data is None:
+        return []
+
+    if isinstance(data, dict):
+        if data.get("error"):
+            logger.warning("Category API returned error payload: %s", data.get("error"))
+            return []
+        for key in ("data", "categories", "result", "items"):
+            nested = data.get(key)
+            if isinstance(nested, list):
+                data = nested
+                break
+        else:
+            cat_id = data.get("id") or data.get("_id")
+            name = data.get("name")
+            if cat_id is not None and name:
+                return [{"id": str(cat_id), "name": str(name)}]
+            return []
+
+    if not isinstance(data, list):
+        logger.warning("Category API unexpected payload type: %s", type(data).__name__)
+        return []
+
+    items: list[dict[str, str]] = []
+    for item in data:
+        if not isinstance(item, dict):
+            logger.warning("Category API skipped non-object item: %r", item)
+            continue
+        cat_id = item.get("id") or item.get("_id")
+        name = item.get("name")
+        if cat_id is None or not name:
+            logger.warning("Category API skipped incomplete item: %s", item)
+            continue
+        items.append({"id": str(cat_id), "name": str(name)})
+    return items
+
+
 class CategoryService:
     def __init__(self) -> None:
         settings = get_settings()
@@ -36,16 +77,22 @@ class CategoryService:
         if cached is not None:
             return cached
 
+        raw: Any
         try:
-            data = get_json(self.settings.categories_api_url)
+            raw = get_json(self.settings.categories_api_url)
         except (httpx.RequestError, httpx.HTTPStatusError) as exc:
             logger.warning(
                 "Category API unreachable, using default categories fallback: %s",
                 exc,
             )
-            data = DEFAULT_CATEGORIES
+            raw = DEFAULT_CATEGORIES
 
-        categories = [Category.model_validate(item) for item in data]
+        items = _normalize_categories_payload(raw)
+        if not items:
+            logger.warning("Category API returned no valid categories; using defaults")
+            items = DEFAULT_CATEGORIES
+
+        categories = [Category.model_validate(item) for item in items]
         self.cache.set(categories)
         logger.info("Loaded %s categories", len(categories))
         return categories
