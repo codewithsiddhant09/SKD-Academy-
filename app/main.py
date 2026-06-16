@@ -9,8 +9,8 @@ load_dotenv()
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger("bookly")
 
-from api.router import api_router
-from api import deps
+from app.api.router import api_router
+from app.api import deps
 
 app = FastAPI(title="BOOKLY AI Appointment Agent")
 
