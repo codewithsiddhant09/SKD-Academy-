@@ -64,3 +64,10 @@ try:
     app = asgi_app
 except Exception:
     logger.exception("Failed to initialize Socket.IO app; continuing with REST only")
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    port = int(os.getenv("PORT", os.getenv("APP_PORT", "5000")))
+    uvicorn.run(app, host="0.0.0.0", port=port)
