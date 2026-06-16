@@ -8,6 +8,9 @@ from langchain_core.documents import Document
 from langchain_openai import OpenAIEmbeddings
 
 from app.core.config import get_settings
+from app.core.logging import get_logger
+
+logger = get_logger(__name__)
 
 
 def chunk_text(text: str, chunk_size: int = 700, chunk_overlap: int = 100) -> list[str]:
@@ -26,13 +29,16 @@ def chunk_text(text: str, chunk_size: int = 700, chunk_overlap: int = 100) -> li
 class RagStore:
     def __init__(self) -> None:
         self.settings = get_settings()
+        persist_dir = Path(self.settings.rag_persist_directory)
+        persist_dir.mkdir(parents=True, exist_ok=True)
+
         self._embeddings = OpenAIEmbeddings(
             model=self.settings.openai_embedding_model,
             api_key=self.settings.openai_api_key,
         )
         self._vectorstore = Chroma(
             collection_name=self.settings.rag_collection_name,
-            persist_directory=self.settings.rag_persist_directory,
+            persist_directory=str(persist_dir),
             embedding_function=self._embeddings,
         )
 
@@ -71,6 +77,15 @@ class RagStore:
             return True
         except Exception:
             return False
+
+
+def create_rag_store() -> RagStore | None:
+    """Create RagStore or return None when ChromaDB is unavailable (e.g. readonly DB)."""
+    try:
+        return RagStore()
+    except Exception as exc:
+        logger.warning("RAG vector store unavailable: %s", exc)
+        return None
 
 
 def load_docs_from_directory(path: Path) -> list[Document]:

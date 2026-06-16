@@ -3,7 +3,7 @@ from fastapi import APIRouter
 from app.api.deps import category_service
 from app.core.config import get_settings
 from app.models.schemas import HealthResponse
-from app.rag.vector_store import RagStore
+from app.rag.vector_store import create_rag_store
 
 router = APIRouter()
 
@@ -13,10 +13,8 @@ def health() -> HealthResponse:
     settings = get_settings()
     rag_ready = False
     if settings.openai_api_key:
-        try:
-            rag_ready = RagStore().is_ready()
-        except Exception:
-            rag_ready = False
+        store = create_rag_store()
+        rag_ready = store.is_ready() if store else False
 
     return HealthResponse(
         status="ok",

@@ -8,7 +8,7 @@ from langchain_openai import ChatOpenAI
 from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.models.schemas import DebugRagResponse
-from app.rag.vector_store import RagStore
+from app.rag.vector_store import create_rag_store
 
 logger = get_logger(__name__)
 
@@ -16,7 +16,7 @@ logger = get_logger(__name__)
 class FaqAgent:
     def __init__(self) -> None:
         self._settings = get_settings()
-        self._store = RagStore() if self._settings.openai_api_key else None
+        self._store = create_rag_store() if self._settings.openai_api_key else None
         self._llm = (
             ChatOpenAI(
                 model=self._settings.openai_model,
