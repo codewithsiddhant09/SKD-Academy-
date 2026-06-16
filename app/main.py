@@ -1,3 +1,12 @@
+import sys
+from pathlib import Path
+
+# Ensure project root is on sys.path regardless of PM2 cwd or entrypoint.
+# Required when PM2 runs "python app/main.py" instead of "uvicorn app.main:app".
+_ROOT = Path(__file__).resolve().parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import logging
