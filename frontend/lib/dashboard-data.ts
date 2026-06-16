@@ -1,0 +1,30 @@
+export const dashboardData = {
+  menuItems: [
+    { label: 'New Chat', iconName: 'MessageCircle' },
+    { label: 'Conversation History', iconName: 'Clock' },
+    { label: 'Saved Sessions', iconName: 'Bookmark' },
+    { label: 'FAQ Testing', iconName: 'HelpCircle' },
+    { label: 'Booking Testing', iconName: 'Sparkles' },
+  ],
+  prompts: ['I want hair smoothing', 'I need bridal makeup', 'Find salons near me', 'What is cancellation policy'],
+  categories: ['Hair', 'Body', 'Nails', 'Face', 'Makeup', 'Henna', 'Hair Removal', 'Bath Treatment'],
+  debugItems: [
+    { label: 'Intent', value: 'Waiting for input' },
+    { label: 'Category', value: 'Waiting for input' },
+    { label: 'Service', value: 'Waiting for input' },
+    { label: 'Location', value: 'Waiting for input' },
+    { label: 'Current Agent', value: 'Idle' },
+    { label: 'Agent Output', value: 'Awaiting user request' },
+    { label: 'Conversation State', value: 'Ready' },
+    { label: 'API Responses', value: 'No activity yet' },
+  ],
+  rawJson: {
+    intent: '',
+    category: '',
+    service: '',
+    location: '',
+    currentAgent: 'Idle',
+    state: 'Ready',
+    timestamp: '',
+  },
+};

@@ -1,0 +1,42 @@
+[
+  {
+    "vendor_id": "101",
+    "salon_name": "Marina Luxe Salon",
+    "categories": ["Hair", "Makeup"],
+    "services": ["Hair Smoothing", "Hair Coloring", "Bridal Makeup"],
+    "location": "Dubai Marina",
+    "rating": 4.8,
+    "availability_score": 0.9,
+    "distance_km": 2.1
+  },
+  {
+    "vendor_id": "102",
+    "salon_name": "Jumeirah Glow Studio",
+    "categories": ["Face", "Makeup", "Hair Removal"],
+    "services": ["Facial", "Bridal Makeup", "Waxing"],
+    "location": "Jumeirah",
+    "rating": 4.6,
+    "availability_score": 0.8,
+    "distance_km": 6.3
+  },
+  {
+    "vendor_id": "103",
+    "salon_name": "Nails and Beyond",
+    "categories": ["Nails", "Bath Treatment"],
+    "services": ["Pedicure", "Manicure", "Spa Bath"],
+    "location": "Sharjah",
+    "rating": 4.5,
+    "availability_score": 0.7,
+    "distance_km": 12.0
+  },
+  {
+    "vendor_id": "104",
+    "salon_name": "Abu Dhabi Hair Art",
+    "categories": ["Hair", "Henna"],
+    "services": ["Hair Smoothing", "Henna Art", "Hair Cut"],
+    "location": "Abu Dhabi",
+    "rating": 4.7,
+    "availability_score": 0.75,
+    "distance_km": 9.4
+  }
+]

@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bookly AI Appointment Assistant</title>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 600px;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+            display: flex;
+            flex-direction: column;
+            height: 90vh;
+            max-height: 800px;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 12px 12px 0 0;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 24px;
+            margin-bottom: 5px;
+        }
+
+        .header p {
+            font-size: 14px;
+            opacity: 0.9;
+        }
+
+        .status {
+            font-size: 12px;
+            margin-top: 10px;
+            padding: 8px 12px;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 4px;
+            display: inline-block;
+        }
+
+        .status.connected {
+            background: rgba(76, 175, 80, 0.3);
+            color: #4caf50;
+        }
+
+        .status.disconnected {
+            background: rgba(244, 67, 54, 0.3);
+            color: #f44336;
+        }
+
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .message {
+            display: flex;
+            gap: 8px;
+            animation: slideIn 0.3s ease-in-out;
+        }
+
+        .message.user {
+            justify-content: flex-end;
+        }
+
+        .message.bot {
+            justify-content: flex-start;
+        }
+
+        .message-content {
+            max-width: 70%;
+            padding: 12px 16px;
+            border-radius: 12px;
+            word-wrap: break-word;
+            font-size: 14px;
+            line-height: 1.4;
+        }
+
+        .message.user .message-content {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-radius: 12px 4px 12px 12px;
+        }
+
+        .message.bot .message-content {
+            background: #f0f0f0;
+            color: #333;
+            border-radius: 4px 12px 12px 12px;
+        }
+
+        .typing-indicator {
+            display: flex;
+            gap: 4px;
+            align-items: center;
+            padding: 12px 16px;
+            background: #f0f0f0;
+            border-radius: 12px;
+            width: fit-content;
+        }
+
+        .typing-dot {
+            width: 8px;
+            height: 8px;
+            background: #999;
+            border-radius: 50%;
+            animation: typing 1.4s infinite;
+        }
+
+        .typing-dot:nth-child(2) {
+            animation-delay: 0.2s;
+        }
+
+        .typing-dot:nth-child(3) {
+            animation-delay: 0.4s;
+        }
+
+        @keyframes typing {
+            0%, 60%, 100% {
+                opacity: 0.5;
+                transform: translateY(0);
+            }
+            30% {
+                opacity: 1;
+                transform: translateY(-10px);
+            }
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .salon-cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 12px;
+            margin-top: 10px;
+        }
+
+        .salon-card {
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 16px;
+            padding: 16px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .salon-card:hover {
+            border-color: #667eea;
+            box-shadow: 0 6px 18px rgba(102, 126, 234, 0.14);
+            transform: translateY(-2px);
+        }
+
+        .salon-name {
+            font-weight: 700;
+            color: #1f2937;
+            margin-bottom: 8px;
+            font-size: 15px;
+        }
+
+        .salon-rating {
+            color: #f59e0b;
+            font-size: 14px;
+            margin-bottom: 4px;
+        }
+
+        .salon-detail {
+            font-size: 13px;
+            color: #4b5563;
+            margin-bottom: 4px;
+        }
+
+        .input-area {
+            border-top: 1px solid #e0e0e0;
+            padding: 16px;
+            background: #fafafa;
+            border-radius: 0 0 12px 12px;
+            display: flex;
+            gap: 10px;
+        }
+
+        .input-area input {
+            flex: 1;
+            padding: 12px 16px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            font-size: 14px;
+            outline: none;
+            transition: border-color 0.3s ease;
+        }
+
+        .input-area input:focus {
+            border-color: #667eea;
+        }
+
+        .input-area input::placeholder {
+            color: #999;
+        }
+
+        .send-btn {
+            padding: 12px 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+            font-size: 14px;
+        }
+
+        .send-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 12px rgba(102, 126, 234, 0.3);
+        }
+
+        .send-btn:active {
+            transform: translateY(0);
+        }
+
+        .send-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .error-message {
+            background: #ffebee;
+            color: #c62828;
+            padding: 12px;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+
+        .info-text {
+            font-size: 12px;
+            color: #666;
+            text-align: center;
+            margin-top: 8px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🤖 Bookly AI</h1>
+            <p>Your AI Appointment Assistant</p>
+            <div class="status disconnected" id="status">Connecting...</div>
+        </div>
+
+        <div class="chat-messages" id="messages">
+            <div class="message bot">
+                <div class="message-content">
+                    👋 Welcome! I'm Bookly, your AI appointment assistant. How can I help you today?
+                </div>
+            </div>
+        </div>
+
+        <div class="input-area">
+            <input
+                type="text"
+                id="messageInput"
+                placeholder="Type your message... (e.g., 'I want to book an appointment')"
+                disabled
+            />
+            <button class="send-btn" id="sendBtn" disabled>Send</button>
+        </div>
+        <div class="info-text" id="info">Waiting for connection...</div>
+    </div>
+
+    <script>
+        const socket = io('http://localhost:8000', {
+            reconnection: true,
+            reconnectionDelay: 1000,
+            reconnectionDelayMax: 5000,
+            reconnectionAttempts: 5,
+            transports: ['polling']
+        });
+
+        const messagesContainer = document.getElementById('messages');
+        const messageInput = document.getElementById('messageInput');
+        const sendBtn = document.getElementById('sendBtn');
+        const statusEl = document.getElementById('status');
+        const infoEl = document.getElementById('info');
+
+        let sessionId = 'session_' + Date.now();
+        let isTyping = false;
+
+        // Connection events
+        socket.on('connect', () => {
+            console.log('Connected to server');
+            statusEl.textContent = '🟢 Connected';
+            statusEl.classList.remove('disconnected');
+            statusEl.classList.add('connected');
+            messageInput.disabled = false;
+            sendBtn.disabled = false;
+            infoEl.textContent = 'Connected to Bookly AI';
+        });
+
+        socket.on('disconnect', () => {
+            console.log('Disconnected from server');
+            statusEl.textContent = '🔴 Disconnected';
+            statusEl.classList.remove('connected');
+            statusEl.classList.add('disconnected');
+            messageInput.disabled = true;
+            sendBtn.disabled = true;
+            infoEl.textContent = 'Connection lost. Attempting to reconnect...';
+        });
+
+        socket.on('connect_error', (error) => {
+            console.error('Connection error:', error);
+            infoEl.textContent = '❌ Connection error: ' + error.message;
+        });
+
+        // Bot response event
+        socket.on('bot_response', (data) => {
+            console.log('Bot response:', data);
+            removeTypingIndicator();
+            isTyping = false;
+
+            const messageEl = document.createElement('div');
+            messageEl.className = 'message bot';
+            messageEl.innerHTML = `<div class="message-content">${escapeHtml(data.reply)}</div>`;
+            messagesContainer.appendChild(messageEl);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        });
+
+        // Salon cards event
+        socket.on('salon_cards', (data) => {
+            console.log('Salon cards:', data);
+            if (data.salons && data.salons.length > 0) {
+                const messageEl = document.createElement('div');
+                messageEl.className = 'message bot';
+
+                let html = '<div class="message-content" style="background: white; border: 1px solid #ddd;">';
+                html += '<div style="font-weight: 600; margin-bottom: 10px; color: #333;">Available Salons:</div>';
+                html += '<div class="salon-cards">';
+
+                data.salons.forEach((salon, index) => {
+                    html += `
+                        <div class="salon-card" data-salon-index="${index}" data-salon-name="${escapeHtml(salon.salonName || 'Salon')}" style="cursor: pointer;">
+                            <div class="salon-name">${escapeHtml(salon.salonName || 'Salon')}</div>
+                            <div class="salon-rating">⭐ ${salon.rating ?? 'N/A'}/5</div>
+                            ${salon.distance ? `<div class="salon-detail">Distance: ${escapeHtml(salon.distance)}</div>` : ''}
+                            ${salon.location ? `<div class="salon-detail">Location: ${escapeHtml(salon.location)}</div>` : ''}
+                            ${salon.reason ? `<div class="salon-detail">Why: ${escapeHtml(salon.reason)}</div>` : ''}
+                        </div>
+                    `;
+                });
+
+                html += '</div></div>';
+                messageEl.innerHTML = html;
+                messagesContainer.appendChild(messageEl);
+                messagesContainer.scrollTop = messagesContainer.scrollHeight;
+
+                // Add click event listeners to salon cards
+                setTimeout(() => {
+                    document.querySelectorAll('.salon-card').forEach(card => {
+                        card.addEventListener('click', function() {
+                            const salonName = this.getAttribute('data-salon-name');
+                            const messageEl = document.createElement('div');
+                            messageEl.className = 'message user';
+                            messageEl.innerHTML = `<div class="message-content">Proceed with ${salonName}</div>`;
+                            messagesContainer.appendChild(messageEl);
+                            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+
+                            // Emit salon selection to server
+                            socket.emit('user_message', {
+                                session_id: sessionId,
+                                message: `Proceed with ${salonName}`
+                            });
+                        });
+                    });
+                }, 0);
+            }
+        });
+
+        // Typing indicator events
+        socket.on('typing_start', () => {
+            if (!isTyping) {
+                isTyping = true;
+                const typingEl = document.createElement('div');
+                typingEl.className = 'message bot';
+                typingEl.id = 'typingIndicator';
+                typingEl.innerHTML = `
+                    <div class="typing-indicator">
+                        <div class="typing-dot"></div>
+                        <div class="typing-dot"></div>
+                        <div class="typing-dot"></div>
+                    </div>
+                `;
+                messagesContainer.appendChild(typingEl);
+                messagesContainer.scrollTop = messagesContainer.scrollHeight;
+            }
+        });
+
+        socket.on('typing_end', () => {
+            removeTypingIndicator();
+            isTyping = false;
+        });
+
+        // Error handling
+        socket.on('error', (error) => {
+            console.error('Socket error:', error);
+            const messageEl = document.createElement('div');
+            messageEl.className = 'message bot';
+            messageEl.innerHTML = `<div class="message-content error-message">❌ Error: ${escapeHtml(error)}</div>`;
+            messagesContainer.appendChild(messageEl);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        });
+
+        // Send message function
+        function sendMessage() {
+            const text = messageInput.value.trim();
+            if (!text) return;
+
+            // Display user message
+            const messageEl = document.createElement('div');
+            messageEl.className = 'message user';
+            messageEl.innerHTML = `<div class="message-content">${escapeHtml(text)}</div>`;
+            messagesContainer.appendChild(messageEl);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+
+            // Clear input
+            messageInput.value = '';
+
+            // Emit to server
+            socket.emit('user_message', {
+                session_id: sessionId,
+                message: text
+            });
+        }
+
+        // Event listeners
+        sendBtn.addEventListener('click', sendMessage);
+        messageInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+
+        // Helper functions
+        function escapeHtml(text) {
+            const map = {
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#039;'
+            };
+            return text.replace(/[&<>"']/g, m => map[m]);
+        }
+
+        function removeTypingIndicator() {
+            const typingEl = document.getElementById('typingIndicator');
+            if (typingEl) typingEl.remove();
+        }
+
+        infoEl.textContent = 'Session ID: ' + sessionId.substring(0, 20) + '...';
+    </script>
+</body>
+</html>

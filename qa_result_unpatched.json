@@ -1,0 +1,143 @@
+2026-06-09 16:40:58,391 | INFO | app.services.category_service | Loaded 8 categories from upstream API
+2026-06-09 16:40:58,410 | INFO | httpx | HTTP Request: GET http://testserver/health "HTTP/1.1 200 OK"
+2026-06-09 16:40:58,418 | INFO | httpx | HTTP Request: GET http://testserver/categories "HTTP/1.1 200 OK"
+2026-06-09 16:40:58,423 | INFO | httpx | HTTP Request: POST http://testserver/chat "HTTP/1.1 503 Service Unavailable"
+2026-06-09 16:40:58,427 | INFO | httpx | HTTP Request: POST http://testserver/chat "HTTP/1.1 503 Service Unavailable"
+2026-06-09 16:40:58,434 | INFO | httpx | HTTP Request: POST http://testserver/chat "HTTP/1.1 503 Service Unavailable"
+2026-06-09 16:40:58,438 | INFO | httpx | HTTP Request: POST http://testserver/chat "HTTP/1.1 503 Service Unavailable"
+2026-06-09 16:40:58,441 | INFO | httpx | HTTP Request: POST http://testserver/chat "HTTP/1.1 503 Service Unavailable"
+2026-06-09 16:40:58,448 | INFO | httpx | HTTP Request: POST http://testserver/chat "HTTP/1.1 503 Service Unavailable"
+2026-06-09 16:40:58,455 | INFO | httpx | HTTP Request: POST http://testserver/book-appointment "HTTP/1.1 503 Service Unavailable"
+2026-06-09 16:40:58,459 | INFO | httpx | HTTP Request: POST http://testserver/book-appointment "HTTP/1.1 503 Service Unavailable"
+2026-06-09 16:40:58,466 | INFO | httpx | HTTP Request: POST http://testserver/chat "HTTP/1.1 422 Unprocessable Entity"
+{
+  "scenario_results": [
+    {
+      "scenario": "health",
+      "status_code": 200,
+      "response": {
+        "status": "ok",
+        "app": "Bookly AI Appointment Chatbot",
+        "rag_ready": false,
+        "categories_cached": true
+      }
+    },
+    {
+      "scenario": "categories",
+      "status_code": 200,
+      "response": [
+        {
+          "id": "1",
+          "name": "Hair"
+        },
+        {
+          "id": "2",
+          "name": "Body"
+        },
+        {
+          "id": "3",
+          "name": "Nails"
+        },
+        {
+          "id": "4",
+          "name": "Face"
+        },
+        {
+          "id": "5",
+          "name": "Makeup"
+        },
+        {
+          "id": "6",
+          "name": "Henna"
+        },
+        {
+          "id": "7",
+          "name": "Hair Removal"
+        },
+        {
+          "id": "8",
+          "name": "Bath Treatment"
+        }
+      ]
+    },
+    {
+      "scenario": "chat_service_no_location",
+      "status_code": 503,
+      "response": {
+        "detail": "Service not initialized"
+      }
+    },
+    {
+      "scenario": "chat_followup_location_only",
+      "status_code": 503,
+      "response": {
+        "detail": "Service not initialized"
+      }
+    },
+    {
+      "scenario": "chat_service_with_location",
+      "status_code": 503,
+      "response": {
+        "detail": "Service not initialized"
+      }
+    },
+    {
+      "scenario": "chat_faq_cancel",
+      "status_code": 503,
+      "response": {
+        "detail": "Service not initialized"
+      }
+    },
+    {
+      "scenario": "chat_booking_start",
+      "status_code": 503,
+      "response": {
+        "detail": "Service not initialized"
+      }
+    },
+    {
+      "scenario": "chat_booking_complete",
+      "status_code": 503,
+      "response": {
+        "detail": "Service not initialized"
+      }
+    },
+    {
+      "scenario": "book_appointment_missing_fields",
+      "status_code": 503,
+      "response": {
+        "detail": "Service not initialized"
+      }
+    },
+    {
+      "scenario": "book_appointment_success",
+      "status_code": 503,
+      "response": {
+        "detail": "Service not initialized"
+      }
+    },
+    {
+      "scenario": "chat_empty_message",
+      "status_code": 422,
+      "response": {
+        "detail": [
+          {
+            "type": "string_too_short",
+            "loc": [
+              "body",
+              "message"
+            ],
+            "msg": "String should have at least 1 character",
+            "input": "",
+            "ctx": {
+              "min_length": 1
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "api_hits": {
+    "GET /user/allCategories": 1
+  }
+}

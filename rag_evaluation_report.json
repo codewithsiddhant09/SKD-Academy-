@@ -1,0 +1,146 @@
+{
+  "summary": {
+    "cases": 5,
+    "retrieval_success_count": 3,
+    "chat_success_count": 4,
+    "retrieval_accuracy": 0.6,
+    "chat_accuracy": 0.8
+  },
+  "results": [
+    {
+      "case": "faq_booking",
+      "retrieval": {
+        "case": "faq_booking",
+        "retrieved_count": 4,
+        "retrieved_texts": [
+          "# Bookly FAQs\n\n## How do I book an appointment?\nTo book an appointment through Bookly:\n1. Open the Bookly chat assistant or mobile app\n2. Select a salon from the available list\n3. Choose a service you want (haircut, massage, nails, etc.)\n4. Pick your preferred date and time from available slots\n5. Enter your contact information and appointment details\n6. Confirm your booking and receive a confirmation number\nYou can also browse salon profiles, view staff expertise, and read customer reviews before booking.\n\n## Can I cancel an appointment?\nYes, you can cancel an appointment through Bookly. The ability to cancel depends on your salon's cancellation policy:\n- Most salons allow cancellation at l",
+          "# Bookly FAQs\n\n## How do I book an appointment?\nTo book an appointment through Bookly:\n1. Open the Bookly chat assistant or mobile app\n2. Select a salon from the available list\n3. Choose a service you want (haircut, massage, nails, etc.)\n4. Pick your preferred date and time from available slots\n5. Enter your contact information and appointment details\n6. Confirm your booking and receive a confirmation number\nYou can also browse salon profiles, view staff expertise, and read customer reviews before booking.\n\n## Can I cancel an appointment?\nYes, you can cancel an appointment through Bookly. The ability to cancel depends on your salon's cancellation policy:\n- Most salons allow cancellation at l",
+          "# Bookly FAQs\n\n## How do I book an appointment?\nTo book an appointment through Bookly:\n1. Open the Bookly chat assistant or mobile app\n2. Select a salon from the available list\n3. Choose a service you want (haircut, massage, nails, etc.)\n4. Pick your preferred date and time from available slots\n5. Enter your contact information and appointment details\n6. Confirm your booking and receive a confirmation number\nYou can also browse salon profiles, view staff expertise, and read customer reviews before booking.\n\n## Can I cancel an appointment?\nYes, you can cancel an appointment through Bookly. The ability to cancel depends on your salon's cancellation policy:\n- Most salons allow cancellation at l",
+          "# Bookly FAQs\n\n## How do I book an appointment?\nTo book an appointment through Bookly:\n1. Open the Bookly chat assistant or mobile app\n2. Select a salon from the available list\n3. Choose a service you want (haircut, massage, nails, etc.)\n4. Pick your preferred date and time from available slots\n5. Enter your contact information and appointment details\n6. Confirm your booking and receive a confirmation number\nYou can also browse salon profiles, view staff expertise, and read customer reviews before booking.\n\n## Can I cancel an appointment?\nYes, you can cancel an appointment through Bookly. The ability to cancel depends on your salon's cancellation policy:\n- Most salons allow cancellation at l"
+        ],
+        "retrieval_match": true
+      },
+      "chat": {
+        "case": "faq_booking",
+        "status_code": 200,
+        "reply": "To book an appointment through Bookly:\n1. Open the Bookly chat assistant or mobile app.\n2. Select a salon from the available list.\n3. Choose a service you want (haircut, massage, nails, etc.).\n4. Pick your preferred date and time from available slots.\n5. Enter your contact information and appointment details.\n6. Confirm your booking and receive a confirmation number.\n\nYou can also browse salon profiles, view staff expertise, and read customer reviews before booking.",
+        "reply_match": true,
+        "structured": {
+          "intent": "faq",
+          "category": null,
+          "service": null,
+          "location": null,
+          "booking_payload": null
+        }
+      }
+    },
+    {
+      "case": "faq_cancel",
+      "retrieval": {
+        "case": "faq_cancel",
+        "retrieved_count": 4,
+        "retrieved_texts": [
+          "ve a confirmation number\nYou can also browse salon profiles, view staff expertise, and read customer reviews before booking.\n\n## Can I cancel an appointment?\nYes, you can cancel an appointment through Bookly. The ability to cancel depends on your salon's cancellation policy:\n- Most salons allow cancellation at least 24 hours before the appointment\n- Some salons have a 48-hour cancellation policy for better planning\n- Cancellations made within 5 hours of the appointment may incur a cancellation fee or result in no refund\n- Late cancellations (less than 2 hours) typically forfeit the full appointment fee\nTo cancel, go to your Bookly app, find the appointment, and click \"Request Cancellation\". ",
+          "ve a confirmation number\nYou can also browse salon profiles, view staff expertise, and read customer reviews before booking.\n\n## Can I cancel an appointment?\nYes, you can cancel an appointment through Bookly. The ability to cancel depends on your salon's cancellation policy:\n- Most salons allow cancellation at least 24 hours before the appointment\n- Some salons have a 48-hour cancellation policy for better planning\n- Cancellations made within 5 hours of the appointment may incur a cancellation fee or result in no refund\n- Late cancellations (less than 2 hours) typically forfeit the full appointment fee\nTo cancel, go to your Bookly app, find the appointment, and click \"Request Cancellation\". ",
+          "ve a confirmation number\nYou can also browse salon profiles, view staff expertise, and read customer reviews before booking.\n\n## Can I cancel an appointment?\nYes, you can cancel an appointment through Bookly. The ability to cancel depends on your salon's cancellation policy:\n- Most salons allow cancellation at least 24 hours before the appointment\n- Some salons have a 48-hour cancellation policy for better planning\n- Cancellations made within 5 hours of the appointment may incur a cancellation fee or result in no refund\n- Late cancellations (less than 2 hours) typically forfeit the full appointment fee\nTo cancel, go to your Bookly app, find the appointment, and click \"Request Cancellation\". ",
+          "ve a confirmation number\nYou can also browse salon profiles, view staff expertise, and read customer reviews before booking.\n\n## Can I cancel an appointment?\nYes, you can cancel an appointment through Bookly. The ability to cancel depends on your salon's cancellation policy:\n- Most salons allow cancellation at least 24 hours before the appointment\n- Some salons have a 48-hour cancellation policy for better planning\n- Cancellations made within 5 hours of the appointment may incur a cancellation fee or result in no refund\n- Late cancellations (less than 2 hours) typically forfeit the full appointment fee\nTo cancel, go to your Bookly app, find the appointment, and click \"Request Cancellation\". "
+        ],
+        "retrieval_match": true
+      },
+      "chat": {
+        "case": "faq_cancel",
+        "status_code": 200,
+        "reply": "Yes, you can cancel an appointment through Bookly. The ability to cancel depends on your salon's cancellation policy.",
+        "reply_match": true,
+        "structured": {
+          "intent": "faq",
+          "category": null,
+          "service": null,
+          "location": null,
+          "booking_payload": null
+        }
+      }
+    },
+    {
+      "case": "faq_refund",
+      "retrieval": {
+        "case": "faq_refund",
+        "retrieved_count": 4,
+        "retrieved_texts": [
+          "ndow: Full refund or service credit\n- Late cancellations (within 5 hours): 50% refund or full fee charged per salon policy\n- No-shows: No refund, full appointment fee retained by salon\n\n**Completed Services:**\n- Services must be completed satisfactorily for no refund\n- Quality issues: Contact salon within 24 hours for dispute resolution\n- If unresolved, Bookly can mediate refund requests\n\n**Refund Processing:**\n- Refunds are processed to the original payment method\n- Credit card refunds: 3-5 business days\n- Digital wallet (Apple Pay, Google Pay): 1-2 business days\n- Bookly account credit: Immediate\n- Most refunds appear within 7 business days\n\n**Refund Limitations:**\n- Non-refundable service",
+          "ndow: Full refund or service credit\n- Late cancellations (within 5 hours): 50% refund or full fee charged per salon policy\n- No-shows: No refund, full appointment fee retained by salon\n\n**Completed Services:**\n- Services must be completed satisfactorily for no refund\n- Quality issues: Contact salon within 24 hours for dispute resolution\n- If unresolved, Bookly can mediate refund requests\n\n**Refund Processing:**\n- Refunds are processed to the original payment method\n- Credit card refunds: 3-5 business days\n- Digital wallet (Apple Pay, Google Pay): 1-2 business days\n- Bookly account credit: Immediate\n- Most refunds appear within 7 business days\n\n**Refund Limitations:**\n- Non-refundable service",
+          "ndow: Full refund or service credit\n- Late cancellations (within 5 hours): 50% refund or full fee charged per salon policy\n- No-shows: No refund, full appointment fee retained by salon\n\n**Completed Services:**\n- Services must be completed satisfactorily for no refund\n- Quality issues: Contact salon within 24 hours for dispute resolution\n- If unresolved, Bookly can mediate refund requests\n\n**Refund Processing:**\n- Refunds are processed to the original payment method\n- Credit card refunds: 3-5 business days\n- Digital wallet (Apple Pay, Google Pay): 1-2 business days\n- Bookly account credit: Immediate\n- Most refunds appear within 7 business days\n\n**Refund Limitations:**\n- Non-refundable service",
+          "ndow: Full refund or service credit\n- Late cancellations (within 5 hours): 50% refund or full fee charged per salon policy\n- No-shows: No refund, full appointment fee retained by salon\n\n**Completed Services:**\n- Services must be completed satisfactorily for no refund\n- Quality issues: Contact salon within 24 hours for dispute resolution\n- If unresolved, Bookly can mediate refund requests\n\n**Refund Processing:**\n- Refunds are processed to the original payment method\n- Credit card refunds: 3-5 business days\n- Digital wallet (Apple Pay, Google Pay): 1-2 business days\n- Bookly account credit: Immediate\n- Most refunds appear within 7 business days\n\n**Refund Limitations:**\n- Non-refundable service"
+        ],
+        "retrieval_match": false
+      },
+      "chat": {
+        "case": "faq_refund",
+        "status_code": 200,
+        "reply": "The refund policy is as follows:\n\n- **Cancellation Window:** Full refund or service credit for cancellations made outside of 5 hours. For late cancellations (within 5 hours), a 50% refund or full fee is charged per salon policy. No-shows result in no refund, with the full appointment fee retained by the salon.\n\n- **Completed Services:** Services must be completed satisfactorily for no refund. If there are quality issues, you must contact the salon within 24 hours for dispute resolution. If unresolved, Bookly can mediate refund requests.\n\n- **Refund Processing:** Refunds are processed to the original payment method. Credit card refunds take 3-5 business days, digital wallet refunds (Apple Pay, Google Pay) take 1-2 business days, and Bookly account credit is immediate. Most refunds appear within 7 business days.\n\n- **Refund Limitations:** Some services may be non-refundable.",
+        "reply_match": true,
+        "structured": {
+          "intent": "faq",
+          "category": null,
+          "service": null,
+          "location": null,
+          "booking_payload": null
+        }
+      }
+    },
+    {
+      "case": "faq_privacy",
+      "retrieval": {
+        "case": "faq_privacy",
+        "retrieved_count": 4,
+        "retrieved_texts": [
+          "y and personal data\n- We will never sell or share your personal data with third parties\n\n**Data Retention:**\n- Active appointment data: Retained while account is active\n- Completed appointments: Retained for 2 years for records\n- Payment data: Deleted per PCI compliance (immediate or encrypted)\n- Opt-out data: Retained to honor your preferences (1 year)\n\n**Contact Us:**\nFor privacy questions or data requests, email privacy@bookly.com or use the privacy request form in your account settings.\n",
+          "y and personal data\n- We will never sell or share your personal data with third parties\n\n**Data Retention:**\n- Active appointment data: Retained while account is active\n- Completed appointments: Retained for 2 years for records\n- Payment data: Deleted per PCI compliance (immediate or encrypted)\n- Opt-out data: Retained to honor your preferences (1 year)\n\n**Contact Us:**\nFor privacy questions or data requests, email privacy@bookly.com or use the privacy request form in your account settings.\n",
+          "y and personal data\n- We will never sell or share your personal data with third parties\n\n**Data Retention:**\n- Active appointment data: Retained while account is active\n- Completed appointments: Retained for 2 years for records\n- Payment data: Deleted per PCI compliance (immediate or encrypted)\n- Opt-out data: Retained to honor your preferences (1 year)\n\n**Contact Us:**\nFor privacy questions or data requests, email privacy@bookly.com or use the privacy request form in your account settings.\n",
+          "y services and user experience\n- Customer support and dispute resolution\n- Analytics and fraud prevention\n- Marketing communications (with your consent)\n\n**Data Protection:**\n- All data is encrypted in transit (HTTPS/TLS)\n- Sensitive payment data is tokenized and never stored on Bookly servers\n- Access to personal data is restricted to authorized staff only\n- We comply with GDPR, CCPA, and local data protection regulations\n- Data backups are secured and protected\n\n**Your Rights:**\n- You can view your personal information anytime in your Bookly profile\n- Request data correction or deletion (subject to legal requirements)\n- Opt-out of marketing emails anytime\n- Download your appointment histor"
+        ],
+        "retrieval_match": false
+      },
+      "chat": {
+        "case": "faq_privacy",
+        "status_code": 200,
+        "reply": "Bookly retains active appointment data while your account is active, and completed appointments for 2 years for records. Payment data is deleted per PCI compliance, either immediately or in an encrypted form. Opt-out data is retained for 1 year to honor your preferences. Bookly uses your data for customer support, dispute resolution, analytics, fraud prevention, and marketing communications (with your consent). All data is encrypted in transit, sensitive payment data is tokenized and never stored on Bookly servers, and access to personal data is restricted to authorized staff only. Bookly complies with GDPR, CCPA, and local data protection regulations.",
+        "reply_match": false,
+        "structured": {
+          "intent": "faq",
+          "category": null,
+          "service": null,
+          "location": null,
+          "booking_payload": null
+        }
+      }
+    },
+    {
+      "case": "faq_recommendation",
+      "retrieval": {
+        "case": "faq_recommendation",
+        "retrieved_count": 4,
+        "retrieved_texts": [
+          "recommendations are generated based on multiple factors:\n- Service fit: We prioritize salons that offer the exact service you're looking for\n- Location: Salons closer to your current location are ranked higher\n- Rating and reviews: Higher-rated salons with positive customer reviews are recommended first\n- Staff expertise: Salons with stylists/professionals specialized in your requested service are prioritized\n- Availability: We show salons with nearby available appointment slots\n- Price range: Recommendations match your budget preferences where possible\n\n## Can I get a refund after my appointment?\nRefunds are handled according to your salon's refund policy:\n- If you cancel before the cancell",
+          "recommendations are generated based on multiple factors:\n- Service fit: We prioritize salons that offer the exact service you're looking for\n- Location: Salons closer to your current location are ranked higher\n- Rating and reviews: Higher-rated salons with positive customer reviews are recommended first\n- Staff expertise: Salons with stylists/professionals specialized in your requested service are prioritized\n- Availability: We show salons with nearby available appointment slots\n- Price range: Recommendations match your budget preferences where possible\n\n## Can I get a refund after my appointment?\nRefunds are handled according to your salon's refund policy:\n- If you cancel before the cancell",
+          "recommendations are generated based on multiple factors:\n- Service fit: We prioritize salons that offer the exact service you're looking for\n- Location: Salons closer to your current location are ranked higher\n- Rating and reviews: Higher-rated salons with positive customer reviews are recommended first\n- Staff expertise: Salons with stylists/professionals specialized in your requested service are prioritized\n- Availability: We show salons with nearby available appointment slots\n- Price range: Recommendations match your budget preferences where possible\n\n## Can I get a refund after my appointment?\nRefunds are handled according to your salon's refund policy:\n- If you cancel before the cancell",
+          "recommendations are generated based on multiple factors:\n- Service fit: We prioritize salons that offer the exact service you're looking for\n- Location: Salons closer to your current location are ranked higher\n- Rating and reviews: Higher-rated salons with positive customer reviews are recommended first\n- Staff expertise: Salons with stylists/professionals specialized in your requested service are prioritized\n- Availability: We show salons with nearby available appointment slots\n- Price range: Recommendations match your budget preferences where possible\n\n## Can I get a refund after my appointment?\nRefunds are handled according to your salon's refund policy:\n- If you cancel before the cancell"
+        ],
+        "retrieval_match": true
+      },
+      "chat": {
+        "case": "faq_recommendation",
+        "status_code": 200,
+        "reply": "Bookly recommendations are generated based on multiple factors:\n- Service fit: We prioritize salons that offer the exact service you're looking for\n- Location: Salons closer to your current location are ranked higher\n- Rating and reviews: Higher-rated salons with positive customer reviews are recommended first\n- Staff expertise: Salons with stylists/professionals specialized in your requested service are prioritized\n- Availability: We show salons with nearby available appointment slots\n- Price range: Recommendations match your budget preferences where possible",
+        "reply_match": true,
+        "structured": {
+          "intent": "faq",
+          "category": null,
+          "service": null,
+          "location": null,
+          "booking_payload": null
+        }
+      }
+    }
+  ]
+}

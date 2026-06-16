@@ -1,0 +1,173 @@
+2026-06-09 16:41:19,324 | INFO | app.services.category_service | Loaded 8 categories from upstream API
+2026-06-09 16:41:19,356 | INFO | app.services.category_service | Loaded 8 categories from upstream API
+2026-06-09 16:41:19,407 | INFO | httpx | HTTP Request: POST http://testserver/chat "HTTP/1.1 200 OK"
+2026-06-09 16:41:19,419 | INFO | httpx | HTTP Request: POST http://testserver/chat "HTTP/1.1 200 OK"
+2026-06-09 16:41:19,435 | INFO | httpx | HTTP Request: POST http://testserver/chat "HTTP/1.1 200 OK"
+2026-06-09 16:41:19,449 | INFO | httpx | HTTP Request: POST http://testserver/chat "HTTP/1.1 200 OK"
+2026-06-09 16:41:19,464 | INFO | httpx | HTTP Request: POST http://testserver/chat "HTTP/1.1 200 OK"
+2026-06-09 16:41:19,479 | INFO | httpx | HTTP Request: POST http://testserver/chat "HTTP/1.1 200 OK"
+2026-06-09 16:41:19,486 | INFO | httpx | HTTP Request: POST http://testserver/book-appointment "HTTP/1.1 400 Bad Request"
+2026-06-09 16:41:19,490 | INFO | httpx | HTTP Request: POST http://testserver/book-appointment "HTTP/1.1 200 OK"
+2026-06-09 16:41:19,503 | INFO | httpx | HTTP Request: POST http://testserver/chat "HTTP/1.1 200 OK"
+{
+  "scenario_results": [
+    {
+      "scenario": "chat_service_no_location",
+      "status_code": 200,
+      "response": {
+        "session_id": "s1",
+        "reply": "Please share your preferred location (for example: Dubai Marina, Jumeirah, Abu Dhabi, Sharjah).",
+        "intent": "service_search",
+        "structured": {
+          "intent": "service_search",
+          "category": "Hair",
+          "service": "I want hair smoothing",
+          "location": null,
+          "booking_payload": null
+        },
+        "recommendations": []
+      }
+    },
+    {
+      "scenario": "chat_followup_location_only",
+      "status_code": 200,
+      "response": {
+        "session_id": "s1",
+        "reply": "I can help with salon recommendations, bookings, FAQs, and policies. Tell me the service you need.",
+        "intent": "general_conversation",
+        "structured": {
+          "intent": "general_conversation",
+          "category": null,
+          "service": null,
+          "location": null,
+          "booking_payload": null
+        },
+        "recommendations": []
+      }
+    },
+    {
+      "scenario": "chat_service_with_location",
+      "status_code": 200,
+      "response": {
+        "session_id": "s2",
+        "reply": "I could not find a strong match right now. Please share another nearby location or service detail.",
+        "intent": "service_search",
+        "structured": {
+          "intent": "service_search",
+          "category": "Hair",
+          "service": "I want hair smoothing in Dubai Marina",
+          "location": {
+            "normalized_location": "I Want Hair Smoothing In Dubai Marina",
+            "radius_km": 10
+          },
+          "booking_payload": null
+        },
+        "recommendations": []
+      }
+    },
+    {
+      "scenario": "chat_faq_cancel",
+      "status_code": 200,
+      "response": {
+        "session_id": "s3",
+        "reply": "I can help with Bookly FAQs and policies. Appointments can usually be canceled before the salon cancellation window closes.",
+        "intent": "appointment_cancellation",
+        "structured": {
+          "intent": "appointment_cancellation",
+          "category": null,
+          "service": null,
+          "location": null,
+          "booking_payload": null
+        },
+        "recommendations": []
+      }
+    },
+    {
+      "scenario": "chat_booking_start",
+      "status_code": 200,
+      "response": {
+        "session_id": "s4",
+        "reply": "To complete your booking, please share: customer_name, phone, salon, service, date, time.",
+        "intent": "appointment_booking",
+        "structured": {
+          "intent": "appointment_booking",
+          "category": null,
+          "service": null,
+          "location": null,
+          "booking_payload": {
+            "customer_name": null,
+            "phone": null,
+            "salon": null,
+            "service": null,
+            "date": null,
+            "time": null
+          }
+        },
+        "recommendations": []
+      }
+    },
+    {
+      "scenario": "chat_booking_complete",
+      "status_code": 200,
+      "response": {
+        "session_id": "s4",
+        "reply": "I could not find a strong match right now. Please share another nearby location or service detail.",
+        "intent": "service_search",
+        "structured": {
+          "intent": "service_search",
+          "category": "Hair",
+          "service": "name: Sara Khan, +971501234567, salon Marina Luxe Salon, service Hair Smoothing, 2026-06-15 18:30",
+          "location": {
+            "normalized_location": "Name: Sara Khan, +971501234567, Salon Marina Luxe Salon, Service Hair Smoothing, 2026-06-15 18:30",
+            "radius_km": 10
+          },
+          "booking_payload": null
+        },
+        "recommendations": []
+      }
+    },
+    {
+      "scenario": "book_appointment_missing_fields",
+      "status_code": 400,
+      "response": {
+        "detail": "Missing required fields: phone, salon, service, date, time"
+      }
+    },
+    {
+      "scenario": "book_appointment_success",
+      "status_code": 200,
+      "response": {
+        "booking_id": "BKL-20260609-29F3D215",
+        "status": "confirmed",
+        "payload": {
+          "customer_name": "Sara Khan",
+          "phone": "+971501234567",
+          "salon": "Marina Luxe Salon",
+          "service": "Hair Smoothing",
+          "date": "2026-06-15",
+          "time": "18:30"
+        }
+      }
+    },
+    {
+      "scenario": "chat_unknown_location",
+      "status_code": 200,
+      "response": {
+        "session_id": "s6",
+        "reply": "Please share your preferred location (for example: Dubai Marina, Jumeirah, Abu Dhabi, Sharjah).",
+        "intent": "service_search",
+        "structured": {
+          "intent": "service_search",
+          "category": "Hair Removal",
+          "service": "I need waxing in Ajman",
+          "location": null,
+          "booking_payload": null
+        },
+        "recommendations": []
+      }
+    }
+  ],
+  "api_hits": {
+    "GET /user/allCategories": 2
+  }
+}
