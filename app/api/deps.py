@@ -20,7 +20,11 @@ def initialize_dependencies() -> None:
     category_service.warmup()
     categories = category_service.get_category_names()
     logger.info("CATEGORIES_LOADED: %s categories from Categories API -> %s", len(categories), categories)
-    orchestrator_service = OrchestratorService(categories=categories, user_service=user_service)
+    orchestrator_service = OrchestratorService(
+        categories=categories,
+        user_service=user_service,
+        category_service=category_service,
+    )
 
     # Skip RAG ingestion for now - will load on-demand
     # settings = get_settings()

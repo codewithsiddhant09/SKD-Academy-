@@ -21,6 +21,7 @@ from typing import Any
 
 from app.core.config import get_settings
 from app.core.logging import get_logger
+from app.utils.text import title_case_safe
 
 logger = get_logger(__name__)
 
@@ -88,6 +89,25 @@ class SalonRepository:
     def _regex(value: str) -> dict[str, Any]:
         return {"$regex": re.escape(value.strip()), "$options": "i"}
 
+    @staticmethod
+    def _active_vendor_filter() -> dict[str, Any]:
+        """Mongo filter that keeps ONLY visible salons.
+
+        Discovered status semantics (Phase 1 audit of users[userType=Vendor]):
+            status        : True = active, False = disabled  (Bug 2 fix)
+            isDeleted     : True = soft-deleted / removed
+            adminApproval : must equal "Approved"
+
+        `isActive`, `isBlocked`, `isSuspended` do NOT exist in this DB.
+        Missing `status` is treated as active ($ne False) for forward safety.
+        """
+        return {
+            "userType": "Vendor",
+            "status": {"$ne": False},
+            "isDeleted": {"$ne": True},
+            "adminApproval": "Approved",
+        }
+
     def _category_ids_for_name(self, db: Any, category: str) -> list[Any]:
         """Return ALL category IDs whose name contains `category` (case-insensitive).
 
@@ -140,9 +160,7 @@ class SalonRepository:
         vendor_ids: set[Any] = set()
         users = db[self._settings.mongodb_users_collection]
         q = {
-            "userType": "Vendor",
-            "isDeleted": {"$ne": True},
-            "adminApproval": "Approved",
+            **self._active_vendor_filter(),
             "businessAddress": self._regex(location),
         }
         logger.info("MONGO_QUERY: users.find(%s)", q)
@@ -259,17 +277,18 @@ class SalonRepository:
 
         ids = list(vendor_ids)
 
-        # 1) Vendors — only Approved, active, non-deleted salons
+        # 1) Vendors — only Approved, active, non-deleted, non-disabled salons.
+        #    profileImage is the primary image; logo is the fallback (Bug 8).
         vendors = {
             v["_id"]: v
             for v in db[self._settings.mongodb_users_collection].find(
+                {"_id": {"$in": ids}, **self._active_vendor_filter()},
                 {
-                    "_id": {"$in": ids},
-                    "userType": "Vendor",
-                    "isDeleted": {"$ne": True},
-                    "adminApproval": "Approved",
+                    "businessName": 1,
+                    "businessAddress": 1,
+                    "profileImage": 1,
+                    "logo": 1,
                 },
-                {"businessName": 1, "businessAddress": 1},
             )
         }
         if not vendors:
@@ -322,6 +341,7 @@ class SalonRepository:
                 for c in category_ids_by_vendor.get(vid, set())
                 if c in category_name_by_id
             ]
+            image = vendor.get("profileImage") or vendor.get("logo") or None
             salons.append(
                 {
                     "salonId": str(vid),
@@ -330,7 +350,72 @@ class SalonRepository:
                     "location": vendor.get("businessAddress") or "",
                     "services": services_by_vendor.get(vid, []),
                     "categories": category_names,
+                    "image": image,
                     "redirectUrl": f"/salon/{vid}",
                 }
             )
         return salons
+
+    # ------------------------------------------------------------------ #
+    # City / location discovery (Bug 1 & Bug 6)
+    # ------------------------------------------------------------------ #
+    @staticmethod
+    def _clean_city(raw: str) -> str | None:
+        """Best-effort city normalization from a free-text businessAddress.
+
+        businessAddress is unstructured (e.g. "G-18, Sector 63, Noida, Uttar
+        Pradesh, India"). We take the most meaningful comma segment, drop the
+        country/obvious-noise tail, and title-case it. Junk like "s", "asdd"
+        (< 3 chars or no vowel) is discarded.
+        """
+        if not raw:
+            return None
+        parts = [p.strip() for p in raw.split(",") if p.strip()]
+        if not parts:
+            return None
+        _DROP = {"india", "uae", "united arab emirates"}
+        candidates = [p for p in parts if p.lower() not in _DROP] or parts
+        # Prefer a segment that looks like a city name (last meaningful token group).
+        city = candidates[-1] if len(candidates) == 1 else candidates[-2] if len(candidates) >= 2 else candidates[-1]
+        city = re.sub(r"\b(uttar pradesh|madhya pradesh|rajasthan|state)\b", "", city, flags=re.IGNORECASE).strip()
+        if not city or len(city) < 3:
+            return None
+        if not re.search(r"[aeiouAEIOU]", city):  # drop gibberish like "ssx", "dsd"
+            return None
+        return title_case_safe(city)
+
+    def get_distinct_cities(self) -> list[str]:
+        """Distinct, normalized cities that have at least one active salon (Bug 1)."""
+        db = self._database()
+        if db is None:
+            return []
+        users = db[self._settings.mongodb_users_collection]
+        cities: set[str] = set()
+        for doc in users.find(self._active_vendor_filter(), {"businessAddress": 1}):
+            city = self._clean_city(doc.get("businessAddress") or "")
+            if city:
+                cities.add(city)
+        result = sorted(cities)
+        logger.info("DISTINCT_CITIES: %s", result)
+        return result
+
+    def get_cities_by_category(self, category: str) -> list[str]:
+        """Distinct cities where active salons offering `category` exist (Bug 6)."""
+        db = self._database()
+        if db is None or not category:
+            return []
+        vendor_ids = self.get_salons_by_category(category)
+        if not vendor_ids:
+            return []
+        users = db[self._settings.mongodb_users_collection]
+        cities: set[str] = set()
+        for doc in users.find(
+            {"_id": {"$in": list(vendor_ids)}, **self._active_vendor_filter()},
+            {"businessAddress": 1},
+        ):
+            city = self._clean_city(doc.get("businessAddress") or "")
+            if city:
+                cities.add(city)
+        result = sorted(cities)
+        logger.info("CITIES_BY_CATEGORY[%s]: %s", category, result)
+        return result

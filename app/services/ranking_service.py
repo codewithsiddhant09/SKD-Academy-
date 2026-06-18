@@ -48,6 +48,7 @@ class RankingService:
                     score=round(score, 4),
                     location=salon.location,
                     services=salon.services,
+                    image=salon.image,
                     redirect_url=f"/salon/{salon.vendor_id}" if salon.vendor_id else None,
                 )
             )

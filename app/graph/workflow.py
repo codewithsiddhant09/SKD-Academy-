@@ -35,6 +35,7 @@ class OrchestratorWorkflow:
         faq_agent: FaqAgent,
         booking_agent: BookingAgent,
         booking_service: BookingService,
+        category_service=None,
     ) -> None:
         self.memory = memory
         self.categories = categories
@@ -46,9 +47,12 @@ class OrchestratorWorkflow:
         self.faq_agent = faq_agent
         self.booking_agent = booking_agent
         self.booking_service = booking_service
+        self.category_service = category_service
 
         graph = StateGraph(GraphState)
         graph.add_node("detect_intent", self.detect_intent)
+        graph.add_node("small_talk", self.small_talk)
+        graph.add_node("category_list", self.category_list)
         graph.add_node("faq_policy", self.faq_policy)
         graph.add_node("service_prepare", self.service_prepare)
         graph.add_node("service_check", self.service_check)
@@ -62,6 +66,8 @@ class OrchestratorWorkflow:
             "detect_intent",
             self.route_intent,
             {
+                "small_talk": "small_talk",
+                "category_list": "category_list",
                 "faq_policy": "faq_policy",
                 "service_prepare": "service_prepare",
                 "booking": "booking",
@@ -79,6 +85,8 @@ class OrchestratorWorkflow:
             self.route_location,
             {"discover": "discover", "end": END},
         )
+        graph.add_edge("small_talk", END)
+        graph.add_edge("category_list", END)
         graph.add_edge("faq_policy", END)
         graph.add_edge("discover", END)
         graph.add_edge("booking", END)
@@ -87,6 +95,7 @@ class OrchestratorWorkflow:
         self.app = graph.compile()
 
     def detect_intent(self, state: GraphState) -> GraphState:
+        logger.info("USER_QUERY: %s", state["user_message"])
         history = self.memory.get_history(state["session_id"])
         analysis = self.intent_agent.analyze(
             message=state["user_message"],
@@ -104,7 +113,22 @@ class OrchestratorWorkflow:
         
         logger.info("ROUTING: Starting intent-based routing for message: %s", user_message)
         logger.info("DETECTED_INTENT: %s", intent)
-        
+
+        # ---------------------------------------------------------------- #
+        # Intent priority (highest first):
+        #   1. Small Talk  -> never triggers booking / category / RAG
+        #   2. Category List -> answered directly from the Categories API
+        # These are deterministic and run before all other routing so that
+        # greetings and category-list requests bypass the LLM/RAG paths.
+        # ---------------------------------------------------------------- #
+        if self._small_talk_reply(user_message) is not None:
+            logger.info("SELECTED_AGENT: small_talk (intent priority 1)")
+            return "small_talk"
+
+        if self._is_category_list_request(user_message):
+            logger.info("SELECTED_AGENT: category_list (intent priority 2)")
+            return "category_list"
+
         if intent in {IntentType.FAQ, IntentType.POLICY, IntentType.APPOINTMENT_CANCELLATION}:
             logger.info("SELECTED_AGENT: faq_agent (intent: %s)", intent)
             logger.info("RAG_TRIGGERED: True")
@@ -161,6 +185,164 @@ class OrchestratorWorkflow:
         logger.info("SELECTED_AGENT: general_agent (general conversation)")
         logger.info("RAG_TRIGGERED: False")
         return "general"
+
+    # ------------------------------------------------------------------ #
+    # Small Talk layer (Issue #1) — deterministic, no LLM / RAG / booking
+    # ------------------------------------------------------------------ #
+    _SMALL_TALK_GREETING = (
+        "Hello and welcome to Bookly.\n\n"
+        "I hope you're doing well today.\n\n"
+        "How may I assist you?"
+    )
+    _SMALL_TALK_HOW_ARE_YOU = (
+        "Thank you for asking.\n\n"
+        "I'm doing well and ready to assist you with salon discovery, "
+        "appointments, and Bookly related questions."
+    )
+    _SMALL_TALK_THANKS = (
+        "You're most welcome.\n\n"
+        "Please let me know if there's anything else I can help you with."
+    )
+    _SMALL_TALK_IDENTITY = (
+        "I am Bookly's AI appointment assistant.\n\n"
+        "I can help you discover salons, book appointments, and answer questions "
+        "about our services and policies.\n\n"
+        "How may I assist you?"
+    )
+    _SMALL_TALK_CAPABILITY = (
+        "I can assist you with the following:\n\n"
+        "• Discovering salons by location\n"
+        "• Finding services by category\n"
+        "• Booking appointments\n"
+        "• Answering questions about Bookly's services and policies\n\n"
+        "How may I assist you today?"
+    )
+
+    @staticmethod
+    def _normalize_small_talk(message: str) -> str:
+        text = re.sub(r"[^\w\s]", " ", message.lower())
+        return re.sub(r"\s+", " ", text).strip()
+
+    def _small_talk_reply(self, message: str) -> str | None:
+        """Return a professional small-talk reply, or None if not small talk.
+
+        Matching is strict: any message carrying real domain intent (a service,
+        booking, salon/category/location keyword) is NOT treated as small talk.
+        """
+        text = self._normalize_small_talk(message)
+        if not text:
+            return None
+        words = text.split()
+
+        # Exclude messages that carry real intent so we never hijack a flow.
+        domain_kw = {
+            "book", "booking", "appointment", "reserve", "schedule", "cancel",
+            "cancellation", "salon", "salons", "vendor", "vendors", "policy",
+            "refund", "price", "cost", "near", "location", "faq", "category",
+            "categories",
+        }
+        if self._has_service_keyword(message) or any(w in domain_kw for w in words):
+            return None
+
+        # Thanks
+        if text in {"thanks", "thank you", "thank u", "thankyou", "thx", "ty",
+                    "many thanks", "much appreciated", "appreciate it",
+                    "thanks a lot", "thank you so much"} or text.startswith("thank "):
+            return self._SMALL_TALK_THANKS
+
+        # Identity
+        if text in {"who are you", "what are you", "who is this",
+                    "what is your name", "whats your name", "who r u"}:
+            return self._SMALL_TALK_IDENTITY
+
+        # Capability
+        if (text in {"what can you do", "what do you do", "how can you help",
+                     "how can you assist", "what can you help me with",
+                     "what can you help with", "how do you work"}
+                or text.startswith("what can you")
+                or text.startswith("how can you help")
+                or text.startswith("how can you assist")):
+            return self._SMALL_TALK_CAPABILITY
+
+        # How are you
+        if (text in {"how are you", "how are you doing", "how r u", "how are u",
+                     "hows it going", "how is it going", "how do you do",
+                     "how are things", "how you doing"}
+                or text.startswith("how are you")
+                or text.startswith("how r u")):
+            return self._SMALL_TALK_HOW_ARE_YOU
+
+        # Greetings
+        greetings = ("hi", "hello", "hey", "greetings", "good morning",
+                     "good afternoon", "good evening", "good day")
+        if text in set(greetings) | {"hey there", "hi there", "hello there",
+                                     "gm", "ge", "yo", "hiya"}:
+            return self._SMALL_TALK_GREETING
+        if len(words) <= 5 and any(
+            text == g or text.startswith(g + " ") for g in greetings
+        ):
+            return self._SMALL_TALK_GREETING
+        if words and words[0] in {"hi", "hello", "hey", "greetings"} and len(words) <= 3:
+            return self._SMALL_TALK_GREETING
+
+        return None
+
+    # ------------------------------------------------------------------ #
+    # Category-list layer (Issue #2) — answered straight from Categories API
+    # ------------------------------------------------------------------ #
+    def _is_category_list_request(self, message: str) -> bool:
+        text = self._normalize_small_talk(message)
+        if not text:
+            return False
+        words = text.split()
+        # Any standalone mention of "category"/"categories" -> list categories.
+        # Covers bare "category", "categories", and every listed variation.
+        if "category" in words or "categories" in words:
+            return True
+        direct = (
+            "list categories", "show categories", "available categories",
+            "category list", "categories list", "service categories",
+            "list of categories", "show me categories", "show all categories",
+            "list all categories", "what categories", "which categories",
+            "all categories",
+        )
+        if any(p in text for p in direct):
+            return True
+        # "what services do you offer" family — only when no concrete service named.
+        if ("service" in text or "services" in text) and any(
+            k in text for k in ("offer", "provide", "available", "have",
+                                "list", "what", "which", "show")
+        ):
+            if not self._has_service_keyword(message):
+                return True
+        return False
+
+    def small_talk(self, state: GraphState) -> GraphState:
+        reply = self._small_talk_reply(state["user_message"]) or self._SMALL_TALK_GREETING
+        state["reply"] = reply
+        state["intent_analysis"] = IntentAnalysis(intent=IntentType.SMALL_TALK)
+        logger.info("SMALL_TALK_HANDLED: %s", state["user_message"])
+        return state
+
+    def category_list(self, state: GraphState) -> GraphState:
+        names: list[str] = []
+        if self.category_service is not None:
+            try:
+                names = self.category_service.get_category_names()
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.warning("CATEGORY_LIST: Categories API fetch failed: %s", exc)
+                names = []
+        if not names:
+            names = list(self.categories)
+
+        body = "\n".join(f"• {name}" for name in names)
+        state["reply"] = (
+            f"Available Categories:\n\n{body}\n\n"
+            "Please select a category or tell me the service you are looking for."
+        )
+        state["intent_analysis"] = IntentAnalysis(intent=IntentType.CATEGORY_LIST)
+        logger.info("CATEGORY_LIST_RETURNED: %s categories -> %s", len(names), names)
+        return state
 
     def faq_policy(self, state: GraphState) -> GraphState:
         logger.info("EXECUTING_AGENT: faq_agent")
@@ -392,12 +574,7 @@ class OrchestratorWorkflow:
                 intro = "Thank you.\n\n"
             state["reply"] = (
                 f"{intro}"
-                "Please share your preferred location so I can find nearby salons.\n\n"
-                "Examples:\n"
-                "• Dubai Marina\n"
-                "• Downtown Dubai\n"
-                "• Abu Dhabi\n"
-                "• Sharjah"
+                "Please share your preferred location so I can find available salons near you."
             )
             return state
 
@@ -434,6 +611,8 @@ class OrchestratorWorkflow:
         )
 
         state["recommendations"] = recommendations[:5]
+        logger.info("SALONS_FOUND: %s", len(recommendations))
+        logger.info("SALON_NAMES: %s", [r.salon_name for r in recommendations[:5]])
         logger.info(
             "SALON_LOADED: %s salon(s) matched for service=%s category=%s location=%s (salon_search=%s)",
             len(state["recommendations"]),
@@ -533,8 +712,25 @@ class OrchestratorWorkflow:
                 state["booking_stage"] = "awaiting_date"
                 state["booking_payload"] = updated
                 return state
+            elif self.booking_agent.is_past_date(updated.date):
+                # Bug 3: reject past dates and re-ask for a valid one.
+                logger.info("BOOKING_DATE: %s", updated.date)
+                logger.info("VALIDATION_RESULT: REJECTED (past date)")
+                updated.date = None
+                self.memory.set_booking_draft(session_id, updated)
+                self.memory.set_booking_stage(session_id, "awaiting_date")
+                state["reply"] = (
+                    "The date you selected is in the past and cannot be booked.\n\n"
+                    "Please share a date that is today or later.\n\n"
+                    "(Format: DD Month YYYY — for example, 15 July 2026)"
+                )
+                state["booking_stage"] = "awaiting_date"
+                state["booking_payload"] = updated
+                return state
             else:
-                # Date received, move to time
+                # Date received and valid, move to time
+                logger.info("BOOKING_DATE: %s", updated.date)
+                logger.info("VALIDATION_RESULT: ACCEPTED")
                 self.memory.set_booking_stage(session_id, "awaiting_time")
                 state["booking_stage"] = "awaiting_time"
                 state["reply"] = (
@@ -556,9 +752,25 @@ class OrchestratorWorkflow:
                 state["booking_stage"] = "awaiting_time"
                 state["booking_payload"] = updated
                 return state
+            elif self.booking_agent.is_past_date(updated.date):
+                # Bug 3 safety net: a past date must never reach confirmation.
+                logger.info("BOOKING_DATE: %s", updated.date)
+                logger.info("VALIDATION_RESULT: REJECTED (past date at confirm)")
+                updated.date = None
+                self.memory.set_booking_draft(session_id, updated)
+                self.memory.set_booking_stage(session_id, "awaiting_date")
+                state["reply"] = (
+                    "The date you selected is in the past and cannot be booked.\n\n"
+                    "Please share a date that is today or later.\n\n"
+                    "(Format: DD Month YYYY — for example, 15 July 2026)"
+                )
+                state["booking_stage"] = "awaiting_date"
+                state["booking_payload"] = updated
+                return state
             else:
                 # Both date and time received - confirm booking.
                 # Enrich payload from the user's session context (no name/phone/email asked).
+                logger.info("VALIDATION_RESULT: ACCEPTED")
                 user_context = self.memory.get_user_context(session_id)
                 if user_context and user_context.user_id:
                     updated.user_id = user_context.user_id

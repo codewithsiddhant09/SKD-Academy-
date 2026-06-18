@@ -13,13 +13,19 @@ from app.memory.conversation_store import ConversationStore
 from app.models.schemas import ChatResponse, SessionContext
 from app.models.state import GraphState
 from app.services.booking_service import BookingService
+from app.services.category_service import CategoryService
 from app.services.user_service import UserService
 
 logger = get_logger(__name__)
 
 
 class OrchestratorService:
-    def __init__(self, categories: list[str], user_service: UserService | None = None) -> None:
+    def __init__(
+        self,
+        categories: list[str],
+        user_service: UserService | None = None,
+        category_service: CategoryService | None = None,
+    ) -> None:
         self.memory = ConversationStore()
         self.user_service = user_service or UserService()
         self.workflow = OrchestratorWorkflow(
@@ -33,6 +39,7 @@ class OrchestratorService:
             faq_agent=FaqAgent(),
             booking_agent=BookingAgent(),
             booking_service=BookingService(),
+            category_service=category_service,
         )
 
     def ensure_user_context(self, session_id: str, user_id: str | None) -> SessionContext | None:

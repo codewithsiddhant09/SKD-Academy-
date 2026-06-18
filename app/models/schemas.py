@@ -80,6 +80,7 @@ class Salon(BaseModel):
     categories: list[str]
     services: list[str]
     location: str
+    image: str | None = None
     rating: float = Field(ge=0, le=5)
     availability_score: float = Field(default=0.8, ge=0, le=1)
     distance_km: float = Field(default=0, ge=0)
@@ -94,6 +95,7 @@ class SalonRecommendation(BaseModel):
     score: float
     location: str | None = None
     services: list[str] = Field(default_factory=list)
+    image: str | None = None
     redirect_url: str | None = None
 
 

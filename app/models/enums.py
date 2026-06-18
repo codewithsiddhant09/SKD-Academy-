@@ -4,6 +4,8 @@ from enum import Enum
 class IntentType(str, Enum):
     FAQ = "faq"
     POLICY = "policy"
+    SMALL_TALK = "small_talk"
+    CATEGORY_LIST = "category_list"
     SERVICE_SEARCH = "service_search"
     SALON_SEARCH = "salon_search"
     LOCATION_SEARCH = "location_search"

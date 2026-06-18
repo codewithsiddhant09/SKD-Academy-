@@ -60,6 +60,7 @@ class SalonService:
             categories=item.get("categories") or [],
             services=item.get("services") or [],
             location=item.get("location") or "",
+            image=item.get("image"),
             rating=float(rating) if rating is not None else 0.0,
             availability_score=0.8,
             distance_km=0.0,

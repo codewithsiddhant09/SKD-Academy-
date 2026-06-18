@@ -122,6 +122,7 @@ async def user_message(sid: str, data: dict[str, Any]) -> None:
                     "distance": getattr(r, "distance", None),
                     "location": getattr(r, "location", None),
                     "services": getattr(r, "services", None) or [],
+                    "image": getattr(r, "image", None),
                     "reason": getattr(r, "reason", None),
                     "redirectUrl": getattr(r, "redirect_url", None) or (f"/salon/{vendor_id}" if vendor_id else None),
                 }
