@@ -51,8 +51,15 @@ class OrchestratorService:
         if existing and existing.user_id == user_id:
             return existing
 
-        profile = self.user_service.get_user_profile(user_id)
-        context = self.user_service.build_session_context(user_id, profile)
+        # User enrichment must never break chat/socket: degrade to a generic
+        # context if anything goes wrong loading the profile.
+        try:
+            profile = self.user_service.get_user_profile(user_id)
+            context = self.user_service.build_session_context(user_id, profile)
+        except Exception:  # pragma: no cover - defensive
+            logger.exception("USER_CONTEXT_FAILED: session=%s user_id=%s", session_id, user_id)
+            context = SessionContext(user_id=user_id)
+
         self.memory.set_user_context(session_id, context)
         logger.info(
             "USER_CONTEXT_SET: session=%s user_id=%s fullName=%s",
@@ -79,6 +86,8 @@ class OrchestratorService:
 
         intent_analysis = result.get("intent_analysis")
         user_context = self.memory.get_user_context(session_id)
+        booking_response = result.get("booking_response")
+        session_memory = self.memory.get_session_memory_api(session_id)
         return ChatResponse(
             session_id=session_id,
             reply=reply,
@@ -89,7 +98,9 @@ class OrchestratorService:
                 "service": result.get("service"),
                 "location": result.get("location_analysis").model_dump() if result.get("location_analysis") else None,
                 "booking_payload": result.get("booking_payload").model_dump() if result.get("booking_payload") else None,
+                "booking_response": booking_response,
                 "user_context": user_context.model_dump() if user_context else None,
+                "session_memory": session_memory,
             },
             recommendations=result.get("recommendations", []),
         )

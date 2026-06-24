@@ -12,16 +12,19 @@ from app.utils.http import get_json
 
 logger = get_logger(__name__)
 
-DEFAULT_CATEGORIES = [
-    {"id": "1", "name": "Hair"},
-    {"id": "2", "name": "Body"},
-    {"id": "3", "name": "Nails"},
-    {"id": "4", "name": "Face"},
-    {"id": "5", "name": "Makeup"},
-    {"id": "6", "name": "Henna"},
-    {"id": "7", "name": "Hair Removal"},
-    {"id": "8", "name": "Bath Treatment"},
-]
+
+def _is_active_admin_category(item: dict[str, Any]) -> bool:
+    """Return True only for admin-added categories that should be visible."""
+    if not item.get("name"):
+        return False
+    if item.get("isDeleted") is True:
+        return False
+    status = item.get("status")
+    if status is False or str(status).lower() in {"false", "inactive", "0"}:
+        return False
+    if str(item.get("adminApproval", "")).lower() == "rejected":
+        return False
+    return True
 
 
 def _normalize_categories_payload(data: Any) -> list[dict[str, str]]:
@@ -54,6 +57,9 @@ def _normalize_categories_payload(data: Any) -> list[dict[str, str]]:
         if not isinstance(item, dict):
             logger.warning("Category API skipped non-object item: %r", item)
             continue
+        if not _is_active_admin_category(item):
+            logger.info("Category API skipped inactive/deleted item: %s", item.get("name"))
+            continue
         cat_id = item.get("id") or item.get("_id")
         name = item.get("name")
         if cat_id is None or not name:
@@ -69,6 +75,28 @@ class CategoryService:
         self.settings = settings
         self.cache = TTLCache[list[Category]](settings.categories_cache_ttl_seconds)
 
+    def _load_active_categories_from_mongo(self) -> list[dict[str, str]]:
+        """Fallback: active admin categories stored in MongoDB (not hardcoded)."""
+        uri = self.settings.mongodb_uri
+        if not uri:
+            return []
+        try:
+            from pymongo import MongoClient
+
+            client = MongoClient(uri, serverSelectionTimeoutMS=5000)
+            db = client[self.settings.mongodb_db_name]
+            coll = db[self.settings.mongodb_categories_collection]
+            query = {"isDeleted": {"$ne": True}, "status": {"$ne": False}}
+            items: list[dict[str, str]] = []
+            for doc in coll.find(query, {"name": 1}):
+                if doc.get("name"):
+                    items.append({"id": str(doc["_id"]), "name": str(doc["name"])})
+            logger.info("CATEGORIES_LOADED_FROM_MONGO: %s active categories", len(items))
+            return items
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("CATEGORIES_MONGO_FALLBACK failed: %s", exc)
+            return []
+
     def warmup(self) -> None:
         _ = self.get_categories(force_refresh=True)
 
@@ -77,24 +105,26 @@ class CategoryService:
         if cached is not None:
             return cached
 
-        raw: Any
+        raw: Any = None
+        source = "Categories API"
         try:
             raw = get_json(self.settings.categories_api_url)
         except (httpx.RequestError, httpx.HTTPStatusError) as exc:
-            logger.warning(
-                "Category API unreachable, using default categories fallback: %s",
-                exc,
-            )
-            raw = DEFAULT_CATEGORIES
+            logger.warning("Category API unreachable: %s", exc)
 
-        items = _normalize_categories_payload(raw)
+        items = _normalize_categories_payload(raw) if raw is not None else []
         if not items:
-            logger.warning("Category API returned no valid categories; using defaults")
-            items = DEFAULT_CATEGORIES
+            source = "MongoDB admin categories"
+            items = self._load_active_categories_from_mongo()
+
+        if not items:
+            logger.warning("No active admin categories available from API or MongoDB")
+            self.cache.set([])
+            return []
 
         categories = [Category.model_validate(item) for item in items]
         self.cache.set(categories)
-        logger.info("Loaded %s categories", len(categories))
+        logger.info("Loaded %s categories from %s", len(categories), source)
         return categories
 
     def get_category_names(self) -> list[str]:

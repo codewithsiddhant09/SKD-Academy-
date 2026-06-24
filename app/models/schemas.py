@@ -14,7 +14,13 @@ class Category(BaseModel):
 
 
 class UserProfile(BaseModel):
-    """User document loaded from MongoDB (field names mapped from the DB schema)."""
+    """User document loaded from MongoDB (field names mapped from the DB schema).
+
+    Types are intentionally permissive because the live `users` collection
+    stores some fields with varying shapes (e.g. `status` as a bool,
+    `businessLocation` as an object, `serviceType` as a list). Values are
+    normalized in `UserService._to_profile` before construction.
+    """
 
     user_id: str
     full_name: str | None = None
@@ -23,7 +29,7 @@ class UserProfile(BaseModel):
     email: str | None = None
     user_type: str | None = None
     is_verified: bool | None = None
-    status: str | None = None
+    status: bool | str | None = None
     business_location: str | None = None
     service_type: str | None = None
     is_completed: bool | None = None
@@ -43,6 +49,36 @@ class SessionContext(BaseModel):
     gender: str | None = None
     nationality: str | None = None
     business_location: str | None = None
+
+
+class SessionMemory(BaseModel):
+    """Explicit per-session fields persisted for the duration of a chat session."""
+
+    selected_salon: str | None = None
+    selected_service: str | None = None
+    selected_category: str | None = None
+    preferred_location: str | None = None
+    appointment_date: str | None = None
+    appointment_time: str | None = None
+    last_intent: str | None = None
+    salon_id: str | None = None
+    booking_summary_shown: bool = False
+    awaiting_confirmation: bool = False
+
+    def to_api_dict(self, conversation_history: list[dict[str, str]] | None = None) -> dict[str, Any]:
+        return {
+            "selectedSalon": self.selected_salon,
+            "selectedService": self.selected_service,
+            "selectedCategory": self.selected_category,
+            "preferredLocation": self.preferred_location,
+            "appointmentDate": self.appointment_date,
+            "appointmentTime": self.appointment_time,
+            "lastIntent": self.last_intent,
+            "salonId": self.salon_id,
+            "bookingSummaryShown": self.booking_summary_shown,
+            "awaitingConfirmation": self.awaiting_confirmation,
+            "conversationHistory": conversation_history or [],
+        }
 
 
 class ChatRequest(BaseModel):

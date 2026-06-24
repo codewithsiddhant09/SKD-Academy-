@@ -129,6 +129,21 @@ class OrchestratorWorkflow:
             logger.info("SELECTED_AGENT: category_list (intent priority 2)")
             return "category_list"
 
+        pending_service = self.get_last_service_query(state) or self.memory.get_session_memory(session_id).selected_service
+        session_memory = self.memory.get_session_memory(session_id)
+        if (
+            (self.is_location_only(user_message) or self._awaiting_location(state))
+            and pending_service
+            and not session_memory.awaiting_confirmation
+        ):
+            if not self.memory.get_booking_stage(session_id):
+                state["intent_analysis"] = IntentAnalysis(
+                    intent=IntentType.SERVICE_SEARCH,
+                    service=pending_service,
+                )
+                logger.info("SELECTED_AGENT: discovery_agent (location reply for pending service)")
+                return "service_prepare"
+
         if intent in {IntentType.FAQ, IntentType.POLICY, IntentType.APPOINTMENT_CANCELLATION}:
             logger.info("SELECTED_AGENT: faq_agent (intent: %s)", intent)
             logger.info("RAG_TRIGGERED: True")
@@ -136,6 +151,11 @@ class OrchestratorWorkflow:
         
         # Check if we're in post-discovery booking flow (skip to date/time collection)
         booking_stage = self.memory.get_booking_stage(session_id)
+        if booking_stage == "awaiting_confirmation" or session_memory.awaiting_confirmation:
+            logger.info("SELECTED_AGENT: booking_agent (awaiting customer confirmation)")
+            state["booking_stage"] = "awaiting_confirmation"
+            return "booking"
+
         if booking_stage in ["awaiting_date", "awaiting_time"]:
             logger.info("SELECTED_AGENT: booking_agent (post-discovery booking stage)")
             state["booking_stage"] = booking_stage
@@ -145,11 +165,23 @@ class OrchestratorWorkflow:
             logger.info("SELECTED_AGENT: booking_agent (active booking session)")
             return "booking"
 
+        if self._try_route_booking_with_memory(session_id, user_message, state):
+            logger.info("SELECTED_AGENT: booking_agent (session memory / complete booking)")
+            return "booking"
+
         booking_draft = self.memory.get_booking_draft(session_id)
         if any(getattr(booking_draft, field) for field in self.booking_agent.REQUIRED_FIELDS):
             if self.booking_agent.missing_fields(booking_draft):
-                logger.info("SELECTED_AGENT: booking_agent (incomplete booking draft)")
-                return "booking"
+                booking_started = bool(
+                    booking_draft.salon
+                    or self.memory.get_booking_stage(session_id)
+                    or self.memory.has_active_booking_session(session_id)
+                    or self._is_explicit_booking_request(user_message)
+                    or self.is_booking_details(user_message)
+                )
+                if booking_started:
+                    logger.info("SELECTED_AGENT: booking_agent (incomplete booking draft)")
+                    return "booking"
 
         if intent == IntentType.APPOINTMENT_BOOKING:
             if self.is_booking_details(user_message):
@@ -172,14 +204,6 @@ class OrchestratorWorkflow:
         # discovery as a salon-search instead of general conversation.
         if self._is_salon_search(user_message):
             logger.info("SELECTED_AGENT: discovery_agent (heuristic salon_search)")
-            return "service_prepare"
-
-        if (self.is_location_only(state["user_message"]) or self._awaiting_location(state)) and self.get_last_service_query(state):
-            state["intent_analysis"] = IntentAnalysis(
-                intent=IntentType.SERVICE_SEARCH,
-                service=self.get_last_service_query(state),
-            )
-            logger.info("SELECTED_AGENT: discovery_agent (location reply for pending service)")
             return "service_prepare"
 
         logger.info("SELECTED_AGENT: general_agent (general conversation)")
@@ -328,12 +352,20 @@ class OrchestratorWorkflow:
         names: list[str] = []
         if self.category_service is not None:
             try:
-                names = self.category_service.get_category_names()
+                # Always refresh from the Categories API for chatbot listings.
+                names = [c.name for c in self.category_service.get_categories(force_refresh=True)]
             except Exception as exc:  # pragma: no cover - defensive
                 logger.warning("CATEGORY_LIST: Categories API fetch failed: %s", exc)
                 names = []
+
         if not names:
-            names = list(self.categories)
+            state["reply"] = (
+                "I am unable to retrieve the category list at the moment.\n\n"
+                "Please try again shortly."
+            )
+            state["intent_analysis"] = IntentAnalysis(intent=IntentType.CATEGORY_LIST)
+            logger.warning("CATEGORY_LIST_RETURNED: no active admin categories available")
+            return state
 
         body = "\n".join(f"• {name}" for name in names)
         state["reply"] = (
@@ -355,6 +387,8 @@ class OrchestratorWorkflow:
     def service_prepare(self, state: GraphState) -> GraphState:
         analysis = state["intent_analysis"]
         message = state["user_message"]
+        session_id = state["session_id"]
+        session_memory = self.memory.get_session_memory(session_id)
 
         # ---------------------------------------------------------------- #
         # Step 1: Decide salon-search vs service-search (intent first).
@@ -401,10 +435,14 @@ class OrchestratorWorkflow:
             # Carry forward a pending service when the user only sent a location.
             if (not service or self.is_location_only(message)) and self.get_last_service_query(state):
                 service = self.get_last_service_query(state)
+            if not service and session_memory.selected_service:
+                service = session_memory.selected_service
 
             category = analysis.category
             if not category and service:
                 category = self.category_agent.map_category(service, self.categories)
+            if not category and session_memory.selected_category:
+                category = session_memory.selected_category
 
             state["service"] = service
             state["category"] = category  # may be None — never forced
@@ -415,9 +453,21 @@ class OrchestratorWorkflow:
                 "LLM" if analysis.category else ("keyword" if category else "none"),
             )
 
+        if not location and session_memory.preferred_location:
+            location = session_memory.preferred_location
+
         if location:
             state["location"] = location
         logger.info("LOCATION_DETECTED: %s", location)
+
+        memory_updates: dict[str, str | None] = {"last_intent": analysis.intent.value}
+        if state.get("service"):
+            memory_updates["selected_service"] = state["service"]
+        if state.get("category"):
+            memory_updates["selected_category"] = state["category"]
+        if state.get("location"):
+            memory_updates["preferred_location"] = state["location"]
+        self.memory.update_session_memory(session_id, **memory_updates)
         return state
 
     def _awaiting_location(self, state: GraphState) -> bool:
@@ -527,6 +577,10 @@ class OrchestratorWorkflow:
         if state.get("salon_search"):
             return state
         service = state.get("service")
+        if not service:
+            service = self.memory.get_session_memory(state["session_id"]).selected_service
+            if service:
+                state["service"] = service
         if not service or self.is_generic_booking_request(service):
             state["reply"] = (
                 "Thank you for reaching out.\n\n"
@@ -553,6 +607,10 @@ class OrchestratorWorkflow:
 
     def location_check(self, state: GraphState) -> GraphState:
         location = state.get("location")
+        if not location:
+            location = self.memory.get_session_memory(state["session_id"]).preferred_location
+            if location:
+                state["location"] = location
         if not location:
             if state.get("salon_search"):
                 state["reply"] = (
@@ -653,6 +711,13 @@ class OrchestratorWorkflow:
             # Set booking stage to only ask for date/time
             self.memory.start_booking_session(session_id)
             self.memory.set_booking_stage(session_id, "awaiting_date")
+            self.memory.sync_session_from_draft(
+                session_id,
+                draft,
+                last_intent="discovery",
+                preferred_location=location_display,
+                selected_category=category,
+            )
             state["booking_stage"] = "awaiting_date"
         else:
             if salon_search or not service:
@@ -675,156 +740,560 @@ class OrchestratorWorkflow:
                 )
         return state
 
+    _BOOKING_CONFIRM_WORDS = frozenset({
+        "yes", "y", "confirm", "confirmed", "book it", "proceed", "continue",
+        "looks good", "looks great", "ok", "okay", "sure", "go ahead",
+    })
+
+    def _is_booking_confirmation(self, message: str) -> bool:
+        lower = message.lower().strip().rstrip(".!?")
+        if lower in self._BOOKING_CONFIRM_WORDS:
+            return True
+        return bool(re.match(
+            r"^(yes|confirm|proceed|book it|looks good|continue|ok|okay|sure)[\s!.]*$",
+            lower,
+        ))
+
+    def _is_booking_decline(self, message: str) -> bool:
+        lower = message.lower().strip().rstrip(".!?")
+        return lower in {
+            "no", "nope", "cancel", "decline", "not now", "don't", "stop", "never mind", "nevermind",
+        } or bool(re.match(r"^no[\s!.]*$", lower))
+
+    def _detect_booking_modification(self, message: str) -> str | None:
+        lower = message.lower().strip()
+        if re.search(r"\bchange\s+(?:the\s+)?time\b", lower) or re.search(r"\bchange\s+time\s+to\b", lower):
+            return "time"
+        if re.search(r"\bchange\s+(?:the\s+)?date\b", lower) or re.search(r"\bchange\s+date\s+to\b", lower):
+            return "date"
+        if re.search(r"\bchange\s+(?:the\s+)?salon\b", lower) or re.search(r"\bchange\s+salon\s+to\b", lower):
+            return "salon"
+        if re.search(r"\bchange\s+(?:the\s+)?service\b", lower) or re.search(r"\bchange\s+service\s+to\b", lower):
+            return "service"
+        if re.search(r"\bmodify\s+(?:the\s+)?(?:booking|appointment)\b", lower) or lower == "modify booking":
+            return "modify"
+        return None
+
+    def _format_booking_summary(self, payload: BookingPayload, *, updated: bool = False) -> str:
+        heading = (
+            "Updated appointment details:"
+            if updated
+            else "Please review your appointment details:"
+        )
+        return (
+            f"{heading}\n\n"
+            f"Service:\n{payload.service}\n\n"
+            f"Salon:\n{payload.salon}\n\n"
+            f"Date:\n{payload.date}\n\n"
+            f"Time:\n{payload.time}\n\n"
+            "Would you like me to confirm this appointment?\n\n"
+            "Reply:\n"
+            "Yes\n"
+            "Confirm\n"
+            "Book It\n"
+            "Proceed"
+        )
+
+    def _present_booking_summary(
+        self,
+        state: GraphState,
+        session_id: str,
+        payload: BookingPayload,
+        *,
+        updated: bool = False,
+    ) -> GraphState:
+        logger.info(
+            "SUMMARY_GENERATED: service=%s salon=%s date=%s time=%s updated=%s",
+            payload.service,
+            payload.salon,
+            payload.date,
+            payload.time,
+            updated,
+        )
+        self.memory.set_booking_draft(session_id, payload)
+        self.memory.start_booking_session(session_id)
+        self.memory.set_booking_stage(session_id, "awaiting_confirmation")
+        self.memory.update_session_memory(
+            session_id,
+            booking_summary_shown=True,
+            awaiting_confirmation=True,
+            last_intent="appointment_booking",
+        )
+        state["reply"] = self._format_booking_summary(payload, updated=updated)
+        state["booking_stage"] = "awaiting_confirmation"
+        state["booking_payload"] = payload
+        return state
+
+    def _handle_booking_confirmation(
+        self,
+        state: GraphState,
+        session_id: str,
+        draft: BookingPayload,
+        lookup: dict[str, str],
+    ) -> GraphState:
+        message = state["user_message"]
+        draft = self.memory.get_booking_draft(session_id)
+
+        if self._is_booking_confirmation(message):
+            logger.info("CONFIRMATION_RECEIVED: %s", message.strip())
+            is_complete, missing = self.booking_agent.booking_data_completeness_check(draft)
+            if is_complete:
+                logger.info("BOOKING_REQUEST_CREATED: customer confirmed")
+                self.memory.update_session_memory(
+                    session_id,
+                    booking_summary_shown=False,
+                    awaiting_confirmation=False,
+                )
+                return self._finalize_booking(state, session_id, draft)
+            logger.info("BOOKING_INCOMPLETE_AT_CONFIRM: missing=%s", missing)
+            self.memory.update_session_memory(
+                session_id,
+                booking_summary_shown=False,
+                awaiting_confirmation=False,
+            )
+            self.memory.set_booking_stage(session_id, f"awaiting_{missing[0]}")
+            state["reply"] = f"Please provide your preferred appointment {missing[0]}."
+            state["booking_payload"] = draft
+            return state
+
+        if self._is_booking_decline(message):
+            logger.info("CONFIRMATION_DECLINED: booking not created")
+            self.memory.update_session_memory(
+                session_id,
+                booking_summary_shown=False,
+                awaiting_confirmation=False,
+            )
+            self.memory.end_booking_session(session_id)
+            state["reply"] = (
+                "Understood. Your appointment has not been booked.\n\n"
+                "You may update any detail (for example, \"Change time to 6 PM\") "
+                "or start a new request whenever you are ready."
+            )
+            state["booking_payload"] = draft
+            return state
+
+        mod_field = self._detect_booking_modification(message)
+        if mod_field == "modify":
+            logger.info("BOOKING_MODIFY_REQUEST: general modification")
+            return self._present_booking_summary(state, session_id, draft, updated=True)
+
+        if mod_field:
+            updated = self.booking_agent.extract_booking_fields(message, draft, lookup)
+            if mod_field == "time":
+                if updated.time:
+                    logger.info("BOOKING_MODIFIED: time=%s", updated.time)
+                    return self._present_booking_summary(state, session_id, updated, updated=True)
+                updated.time = None
+                self.memory.set_booking_draft(session_id, updated)
+                self.memory.update_session_memory(
+                    session_id,
+                    booking_summary_shown=False,
+                    awaiting_confirmation=False,
+                    appointment_time=None,
+                )
+                self.memory.set_booking_stage(session_id, "awaiting_time")
+                state["reply"] = (
+                    "Please provide your preferred appointment time.\n\n"
+                    "(Format: HH AM/PM — for example, 4 PM)"
+                )
+                state["booking_payload"] = updated
+                return state
+
+            if mod_field == "date":
+                if updated.date and not self.booking_agent.is_past_date(updated.date):
+                    logger.info("BOOKING_MODIFIED: date=%s", updated.date)
+                    return self._present_booking_summary(state, session_id, updated, updated=True)
+                updated.date = None
+                self.memory.set_booking_draft(session_id, updated)
+                self.memory.update_session_memory(
+                    session_id,
+                    booking_summary_shown=False,
+                    awaiting_confirmation=False,
+                    appointment_date=None,
+                )
+                self.memory.set_booking_stage(session_id, "awaiting_date")
+                state["reply"] = (
+                    "Please provide your preferred appointment date.\n\n"
+                    "(Format: DD Month YYYY — for example, 15 July 2026)"
+                )
+                state["booking_payload"] = updated
+                return state
+
+            if mod_field == "salon":
+                salon_match = re.search(r"change\s+salon\s+to\s+(.+?)(?:\.|$)", message, re.IGNORECASE)
+                if salon_match:
+                    candidate = title_case_safe(salon_match.group(1).strip())
+                    if self.booking_agent._is_valid_salon_name(candidate):
+                        updated.salon = candidate
+                        lookup_match = lookup.get(candidate.lower())
+                        if lookup_match:
+                            updated.salon_id = lookup_match
+                if updated.salon and self.booking_agent._is_valid_salon_name(updated.salon):
+                    logger.info("BOOKING_MODIFIED: salon=%s", updated.salon)
+                    return self._present_booking_summary(state, session_id, updated, updated=True)
+                updated.salon = None
+                updated.salon_id = None
+                self.memory.set_booking_draft(session_id, updated)
+                self.memory.update_session_memory(
+                    session_id,
+                    booking_summary_shown=False,
+                    awaiting_confirmation=False,
+                    selected_salon=None,
+                    salon_id=None,
+                )
+                self.memory.set_booking_stage(session_id, "awaiting_date")
+                state["reply"] = "Please select your preferred salon to continue."
+                state["booking_payload"] = updated
+                return state
+
+            if mod_field == "service":
+                if updated.service:
+                    logger.info("BOOKING_MODIFIED: service=%s", updated.service)
+                    return self._present_booking_summary(state, session_id, updated, updated=True)
+                updated.service = None
+                self.memory.set_booking_draft(session_id, updated)
+                self.memory.update_session_memory(
+                    session_id,
+                    booking_summary_shown=False,
+                    awaiting_confirmation=False,
+                    selected_service=None,
+                )
+                state["reply"] = (
+                    "To assist you, could you please let me know which service you are looking for?"
+                )
+                state["booking_payload"] = updated
+                return state
+
+        # Allow inline value updates while awaiting confirmation (e.g. "6 PM")
+        updated = self.booking_agent.extract_booking_fields(message, draft, lookup)
+        self.booking_agent.log_detected_entities(updated)
+        is_complete, _ = self.booking_agent.booking_data_completeness_check(updated)
+        if is_complete and (
+            updated.date != draft.date
+            or updated.time != draft.time
+            or updated.salon != draft.salon
+            or updated.service != draft.service
+        ):
+            logger.info("BOOKING_MODIFIED: inline update detected")
+            return self._present_booking_summary(state, session_id, updated, updated=True)
+
+        state["reply"] = (
+            "Please reply Yes to confirm your appointment, or tell me what you would "
+            "like to change (for example, \"Change time to 6 PM\")."
+        )
+        state["booking_payload"] = draft
+        state["booking_stage"] = "awaiting_confirmation"
+        return state
+
     def booking(self, state: GraphState) -> GraphState:
         session_id = state["session_id"]
         draft = self.memory.get_booking_draft(session_id)
+        lookup = self.memory.get_salon_lookup(session_id)
+        session_memory = self.memory.get_session_memory(session_id)
 
-        # Handle salon selection before asking for date/time
-        salon_choice = self._extract_salon_selection(state["user_message"])
-        if salon_choice:
-            draft.salon = salon_choice
-            salon_lookup = self.memory.get_salon_lookup(session_id)
-            resolved_id = salon_lookup.get(salon_choice.lower())
-            if resolved_id:
-                draft.salon_id = resolved_id
+        if (
+            session_memory.awaiting_confirmation
+            or self.memory.get_booking_stage(session_id) == "awaiting_confirmation"
+        ):
+            return self._handle_booking_confirmation(state, session_id, draft, lookup)
+
+        # Resolve salon selection from explicit phrases or salon-card lookup.
+        draft, salon_selected = self._apply_salon_selection(session_id, state["user_message"], draft)
+        if salon_selected:
             self.memory.set_booking_draft(session_id, draft)
             self.memory.start_booking_session(session_id)
-            self.memory.set_booking_stage(session_id, "awaiting_date")
-            booking_stage = "awaiting_date"
+            if not draft.date:
+                self.memory.set_booking_stage(session_id, "awaiting_date")
+            elif not draft.time:
+                self.memory.set_booking_stage(session_id, "awaiting_time")
+            booking_stage = self.memory.get_booking_stage(session_id) or "awaiting_date"
         else:
             booking_stage = state.get("booking_stage") or self.memory.get_booking_stage(session_id)
             if not booking_stage and draft.salon and draft.service:
                 booking_stage = "awaiting_date"
 
-        # Only extract date/time - no name/phone/email extraction
-        updated = self.booking_agent.extract_date_and_time(state["user_message"], draft)
+        updated = self.booking_agent.extract_booking_fields(
+            state["user_message"],
+            draft,
+            lookup,
+        )
+        self.booking_agent.log_detected_entities(updated)
         self.memory.set_booking_draft(session_id, updated)
+        self.memory.sync_session_from_draft(session_id, updated, last_intent="appointment_booking")
 
-        # Stage 1: Ask for date
-        if booking_stage == "awaiting_date":
-            if not updated.date:
-                self.memory.start_booking_session(session_id)
-                self.memory.set_booking_stage(session_id, "awaiting_date")
-                state["reply"] = (
-                    "Please share your preferred date.\n\n"
-                    "(Format: DD Month YYYY — for example, 15 July 2026)"
-                )
-                state["booking_stage"] = "awaiting_date"
-                state["booking_payload"] = updated
-                return state
-            elif self.booking_agent.is_past_date(updated.date):
-                # Bug 3: reject past dates and re-ask for a valid one.
-                logger.info("BOOKING_DATE: %s", updated.date)
-                logger.info("VALIDATION_RESULT: REJECTED (past date)")
-                updated.date = None
-                self.memory.set_booking_draft(session_id, updated)
-                self.memory.set_booking_stage(session_id, "awaiting_date")
-                state["reply"] = (
-                    "The date you selected is in the past and cannot be booked.\n\n"
-                    "Please share a date that is today or later.\n\n"
-                    "(Format: DD Month YYYY — for example, 15 July 2026)"
-                )
-                state["booking_stage"] = "awaiting_date"
-                state["booking_payload"] = updated
-                return state
-            else:
-                # Date received and valid, move to time
-                logger.info("BOOKING_DATE: %s", updated.date)
-                logger.info("VALIDATION_RESULT: ACCEPTED")
-                self.memory.set_booking_stage(session_id, "awaiting_time")
-                state["booking_stage"] = "awaiting_time"
-                state["reply"] = (
-                    "What time would you prefer?\n\n"
-                    "(Format: HH AM/PM — for example, 4 PM)"
-                )
-                state["booking_payload"] = updated
-                return state
+        is_complete, missing_fields = self.booking_agent.booking_data_completeness_check(updated)
+        if is_complete:
+            logger.info("BOOKING_DETAILS_EXTRACTED: all fields present — showing confirmation summary")
+            return self._present_booking_summary(state, session_id, updated)
 
-        # Stage 2: Ask for time and confirm when received
-        if booking_stage == "awaiting_time":
-            if not updated.time:
-                self.memory.start_booking_session(session_id)
-                self.memory.set_booking_stage(session_id, "awaiting_time")
-                state["reply"] = (
-                    "What time would you prefer?\n\n"
-                    "(Format: HH AM/PM — for example, 4 PM)"
-                )
-                state["booking_stage"] = "awaiting_time"
-                state["booking_payload"] = updated
-                return state
-            elif self.booking_agent.is_past_date(updated.date):
-                # Bug 3 safety net: a past date must never reach confirmation.
-                logger.info("BOOKING_DATE: %s", updated.date)
-                logger.info("VALIDATION_RESULT: REJECTED (past date at confirm)")
-                updated.date = None
-                self.memory.set_booking_draft(session_id, updated)
-                self.memory.set_booking_stage(session_id, "awaiting_date")
-                state["reply"] = (
-                    "The date you selected is in the past and cannot be booked.\n\n"
-                    "Please share a date that is today or later.\n\n"
-                    "(Format: DD Month YYYY — for example, 15 July 2026)"
-                )
-                state["booking_stage"] = "awaiting_date"
-                state["booking_payload"] = updated
-                return state
-            else:
-                # Both date and time received - confirm booking.
-                # Enrich payload from the user's session context (no name/phone/email asked).
-                logger.info("VALIDATION_RESULT: ACCEPTED")
-                user_context = self.memory.get_user_context(session_id)
-                if user_context and user_context.user_id:
-                    updated.user_id = user_context.user_id
+        logger.info("BOOKING_MISSING_FIELDS: %s", missing_fields)
 
-                logger.info(
-                    "BOOKING_PAYLOAD_GENERATED: %s",
-                    {
-                        "userId": updated.user_id,
-                        "salonId": updated.salon_id,
-                        "service": updated.service,
-                        "category": updated.category,
-                        "date": updated.date,
-                        "time": updated.time,
-                    },
-                )
-
-                confirmed = self.booking_service.create_booking(updated)
-                self.memory.clear_booking_draft(session_id)
-                self.memory.end_booking_session(session_id)
-
-                state["intent_analysis"] = IntentAnalysis(
-                    intent=IntentType.APPOINTMENT_BOOKING,
-                    service=updated.service,
-                )
-                state["booking_payload"] = BookingPayload.model_validate(confirmed.payload.model_dump())
-                state["reply"] = (
-                    f"Your appointment has been booked successfully.\n\n"
-                    f"Service: {updated.service}\n"
-                    f"Salon: {updated.salon}\n"
-                    f"Date: {updated.date}\n"
-                    f"Time: {updated.time}\n\n"
-                    f"Booking ID: {confirmed.booking_id}\n\n"
-                    f"Thank you for choosing Bookly."
-                )
-                return state
-
-        # Fallback (should not reach here in normal flow)
-        if draft.salon and draft.service:
+        if updated.date and self.booking_agent.is_past_date(updated.date):
+            logger.info("BOOKING_DATE: %s", updated.date)
+            logger.info("VALIDATION_RESULT: REJECTED (past date)")
+            updated.date = None
+            self.memory.set_booking_draft(session_id, updated)
+            self.memory.update_session_memory(session_id, appointment_date=None)
             self.memory.set_booking_stage(session_id, "awaiting_date")
             state["reply"] = (
-                "Please share your preferred date to complete the booking.\n\n"
+                "The date you selected is in the past and cannot be booked.\n\n"
+                "Please share a date that is today or later.\n\n"
                 "(Format: DD Month YYYY — for example, 15 July 2026)"
             )
             state["booking_stage"] = "awaiting_date"
             state["booking_payload"] = updated
             return state
 
+        missing = missing_fields[0] if missing_fields else None
+        if missing == "date":
+            self.memory.start_booking_session(session_id)
+            self.memory.set_booking_stage(session_id, "awaiting_date")
+            state["reply"] = (
+                "Please provide your preferred appointment date.\n\n"
+                "(Format: DD Month YYYY — for example, 15 July 2026)"
+            )
+            state["booking_stage"] = "awaiting_date"
+            state["booking_payload"] = updated
+            return state
+
+        if missing == "time":
+            self.memory.set_booking_stage(session_id, "awaiting_time")
+            state["booking_stage"] = "awaiting_time"
+            state["reply"] = (
+                "Please provide your preferred appointment time.\n\n"
+                "(Format: HH AM/PM — for example, 4 PM)"
+            )
+            state["booking_payload"] = updated
+            return state
+
+        if missing == "service":
+            state["reply"] = (
+                "To assist you, could you please let me know which service you are looking for?"
+            )
+            state["booking_payload"] = updated
+            return state
+
+        if missing == "salon":
+            state["reply"] = "Please select your preferred salon to continue."
+            state["booking_payload"] = updated
+            return state
+
         state["reply"] = (
-            "Please share your preferred date to complete the booking.\n\n"
+            "Please provide your preferred appointment date.\n\n"
             "(Format: DD Month YYYY — for example, 15 July 2026)"
         )
         state["booking_stage"] = "awaiting_date"
         state["booking_payload"] = updated
         return state
+
+    def _is_booking_ready(self, payload: BookingPayload) -> bool:
+        complete, _ = self.booking_agent.booking_data_completeness_check(payload)
+        return complete
+
+    def _apply_salon_selection(
+        self,
+        session_id: str,
+        message: str,
+        draft: BookingPayload,
+    ) -> tuple[BookingPayload, bool]:
+        """Resolve salon from explicit selection or salon-card lookup."""
+        text = message.strip()
+        text_lower = text.lower()
+        if text_lower in {
+            "proceed", "continue", "yes", "ok", "okay", "next",
+            "confirm", "confirmed", "book it", "looks good", "sure",
+        }:
+            return draft, False
+
+        salon_choice = self._extract_salon_selection(message)
+        if salon_choice:
+            draft.salon = salon_choice
+            lookup = self.memory.get_salon_lookup(session_id)
+            resolved_id = lookup.get(salon_choice.lower())
+            if resolved_id:
+                draft.salon_id = resolved_id
+            logger.info("SALON_SELECTED: %s salon_id=%s", draft.salon, draft.salon_id)
+            return draft, True
+
+        lookup = self.memory.get_salon_lookup(session_id)
+        if not lookup:
+            return draft, False
+
+        if text_lower in lookup:
+            draft.salon = title_case_safe(text)
+            draft.salon_id = lookup[text_lower]
+            logger.info("SALON_SELECTED: %s salon_id=%s", draft.salon, draft.salon_id)
+            return draft, True
+
+        for name, sid in lookup.items():
+            if name in text_lower or text_lower in name:
+                draft.salon = title_case_safe(name)
+                draft.salon_id = sid
+                logger.info("SALON_SELECTED: %s salon_id=%s", draft.salon, draft.salon_id)
+                return draft, True
+
+        salon, salon_id = self.booking_agent.extract_salon_from_message(message, lookup)
+        if salon and self.booking_agent._is_valid_salon_name(salon):
+            draft.salon = salon
+            if salon_id:
+                draft.salon_id = salon_id
+            logger.info("SALON_SELECTED: %s salon_id=%s", draft.salon, draft.salon_id)
+            return draft, True
+
+        if lookup and not re.search(r"\d|tomorrow|today|\bam\b|\bpm\b", text_lower):
+            words = text.split()
+            if 1 <= len(words) <= 5 and text_lower not in {"proceed", "continue", "yes", "ok", "okay", "next"}:
+                candidate = title_case_safe(text)
+                if self.booking_agent._is_valid_salon_name(candidate):
+                    draft.salon = candidate
+                    for name, sid in lookup.items():
+                        if text_lower in name or name in text_lower:
+                            draft.salon_id = sid
+                            break
+                    logger.info("SALON_SELECTED: %s salon_id=%s", draft.salon, draft.salon_id)
+                    return draft, True
+
+        return draft, False
+
+    def _finalize_booking(
+        self,
+        state: GraphState,
+        session_id: str,
+        updated: BookingPayload,
+    ) -> GraphState:
+        if self.booking_agent.is_past_date(updated.date):
+            logger.info("BOOKING_DATE: %s", updated.date)
+            logger.info("VALIDATION_RESULT: REJECTED (past date at confirm)")
+            updated.date = None
+            self.memory.set_booking_draft(session_id, updated)
+            self.memory.set_booking_stage(session_id, "awaiting_date")
+            state["reply"] = (
+                "The date you selected is in the past and cannot be booked.\n\n"
+                "Please share a date that is today or later.\n\n"
+                "(Format: DD Month YYYY — for example, 15 July 2026)"
+            )
+            state["booking_stage"] = "awaiting_date"
+            state["booking_payload"] = updated
+            return state
+
+        user_context = self.memory.get_user_context(session_id)
+        if user_context and user_context.user_id:
+            updated.user_id = user_context.user_id
+
+        logger.info(
+            "BOOKING_PAYLOAD_GENERATED: %s",
+            {
+                "userId": updated.user_id,
+                "salonId": updated.salon_id,
+                "selectedSalon": updated.salon,
+                "selectedService": updated.service,
+                "appointmentDate": updated.date,
+                "appointmentTime": updated.time,
+            },
+        )
+        logger.info("BOOKING_API_CALLED: creating booking request")
+        confirmed = self.booking_service.create_booking(updated)
+        logger.info("BOOKING_STORED: booking_id=%s status=%s", confirmed.booking_id, confirmed.status)
+        logger.info("BOOKING_SUCCESS: booking_id=%s", confirmed.booking_id)
+
+        self.memory.clear_booking_draft(session_id)
+        self.memory.end_booking_session(session_id)
+
+        state["intent_analysis"] = IntentAnalysis(
+            intent=IntentType.APPOINTMENT_BOOKING,
+            service=updated.service,
+        )
+        state["booking_payload"] = BookingPayload.model_validate(confirmed.payload.model_dump())
+        state["booking_response"] = confirmed.model_dump()
+        state["reply"] = (
+            "Your appointment request has been submitted successfully.\n\n"
+            f"Salon:\n{updated.salon}\n\n"
+            f"Service:\n{updated.service}\n\n"
+            f"Date:\n{updated.date}\n\n"
+            f"Time:\n{updated.time}\n\n"
+            "Thank you for choosing Bookly."
+        )
+        return state
+
+    def _message_has_schedule(self, message: str) -> bool:
+        lower = message.lower()
+        return bool(
+            self.booking_agent.extract_relative_date(message)
+            or re.search(r"\b\d{1,2}/\d{1,2}/\d{4}\b", message)
+            or re.search(r"\b\d{4}-\d{2}-\d{2}\b", message)
+            or re.search(r"\b\d{1,2}:\d{2}\s*(?:am|pm)\b", lower)
+            or re.search(r"\b\d{1,2}\s*(?:am|pm)\b", lower)
+            or "tomorrow" in lower
+            or "today" in lower
+        )
+
+    def _try_route_booking_with_memory(
+        self,
+        session_id: str,
+        message: str,
+        state: GraphState,
+    ) -> bool:
+        draft = self.memory.get_booking_draft(session_id)
+        lookup = self.memory.get_salon_lookup(session_id)
+        preview = self.booking_agent.extract_booking_fields(message, draft, lookup)
+        self.booking_agent.log_detected_entities(preview)
+
+        is_complete, missing = self.booking_agent.booking_data_completeness_check(preview)
+        if is_complete:
+            self.memory.set_booking_draft(session_id, preview)
+            self.memory.start_booking_session(session_id)
+            state["booking_stage"] = "awaiting_confirmation"
+            return True
+
+        has_schedule = self._message_has_schedule(message)
+        has_booking_context = bool(
+            preview.service
+            or preview.salon
+            or draft.service
+            or draft.salon
+            or self.memory.get_session_memory(session_id).selected_service
+            or self.memory.get_session_memory(session_id).selected_salon
+        )
+        if has_schedule and has_booking_context and len(missing) < 4:
+            self.memory.set_booking_draft(session_id, preview)
+            self.memory.start_booking_session(session_id)
+            if "date" in missing:
+                self.memory.set_booking_stage(session_id, "awaiting_date")
+            elif "time" in missing:
+                self.memory.set_booking_stage(session_id, "awaiting_time")
+            state["booking_stage"] = self.memory.get_booking_stage(session_id)
+            return True
+
+        if has_schedule and self._is_explicit_booking_request(message) and len(missing) < 4:
+            self.memory.set_booking_draft(session_id, preview)
+            self.memory.start_booking_session(session_id)
+            state["booking_stage"] = self.memory.get_booking_stage(session_id) or "awaiting_date"
+            return True
+
+        memory = self.memory.get_session_memory(session_id)
+        if memory.selected_service and memory.selected_salon and has_schedule:
+            self.memory.set_booking_draft(session_id, preview)
+            self.memory.start_booking_session(session_id)
+            state["booking_stage"] = self.memory.get_booking_stage(session_id) or "awaiting_date"
+            return True
+
+        if preview.salon and self._is_explicit_booking_request(message):
+            self.memory.set_booking_draft(session_id, preview)
+            self.memory.start_booking_session(session_id)
+            state["booking_stage"] = self.memory.get_booking_stage(session_id) or "awaiting_date"
+            return True
+
+        return False
+
+    @staticmethod
+    def extract_relative_date_hint(message: str) -> bool:
+        lower = message.lower()
+        return "tomorrow" in lower or "today" in lower
+
+    @staticmethod
+    def _is_explicit_booking_request(message: str) -> bool:
+        lower = message.lower()
+        return any(term in lower for term in ("book", "appointment", "reserve", "schedule"))
 
     def _extract_salon_selection(self, message: str) -> str | None:
         match = re.search(r"\b(?:proceed with|book at|select|choose)\s+(?P<salon>.+)\b", message, re.IGNORECASE)
@@ -891,13 +1360,26 @@ class OrchestratorWorkflow:
         text = message.lower()
         return bool(
             re.search(r"\d{4}-\d{2}-\d{2}", text)
+            or re.search(r"\b\d{1,2}/\d{1,2}/\d{4}\b", text)
             or re.search(r"\d{1,2}:\d{2}", text)
+            or re.search(r"\b\d{1,2}\s*(?:am|pm)\b", text)
+            or re.search(r"\b(tomorrow|today)\b", text)
             or "name" in text
             or "phone" in text
             or "salon" in text
+            or re.search(
+                r"\b\d{1,2}\s+(?:january|february|march|april|may|june|july|august|"
+                r"september|october|november|december)\s+\d{4}\b",
+                text,
+            )
         )
 
     def get_last_service_query(self, state: GraphState) -> str | None:
+        session_id = state.get("session_id")
+        if session_id:
+            memory_service = self.memory.get_session_memory(session_id).selected_service
+            if memory_service:
+                return memory_service
         for msg in reversed(state.get("history", [])):
             if msg["role"] != "user":
                 continue

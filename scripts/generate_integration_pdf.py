@@ -198,7 +198,7 @@ def build() -> None:
     # ── 2. REST APIs ─────────────────────────────────────────────────────────
     pdf.add_page()
     pdf.h1("2. REST API Inventory")
-    pdf.body("Base URL: http://localhost:8000 | Content-Type: application/json | No authentication required")
+    pdf.body(": http://localhost:8Base URL000 | Content-Type: application/json | No authentication required")
 
     apis = [
         ("POST", "/chat", "Core", "Send user message; runs full LangGraph workflow.",

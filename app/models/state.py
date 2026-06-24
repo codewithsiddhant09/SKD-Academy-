@@ -15,6 +15,7 @@ class GraphState(TypedDict, total=False):
     location_analysis: LocationAnalysis
     recommendations: list[SalonRecommendation]
     booking_payload: BookingPayload
+    booking_response: dict
     booking_stage: str
     reply: str
     metadata: dict[str, Any]
