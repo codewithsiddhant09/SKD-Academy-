@@ -64,6 +64,7 @@ class SessionMemory(BaseModel):
     salon_id: str | None = None
     booking_summary_shown: bool = False
     awaiting_confirmation: bool = False
+    booking_status: str | None = None  # collecting | awaiting_confirmation | paused | completed
 
     def to_api_dict(self, conversation_history: list[dict[str, str]] | None = None) -> dict[str, Any]:
         return {
@@ -77,6 +78,7 @@ class SessionMemory(BaseModel):
             "salonId": self.salon_id,
             "bookingSummaryShown": self.booking_summary_shown,
             "awaitingConfirmation": self.awaiting_confirmation,
+            "bookingStatus": self.booking_status,
             "conversationHistory": conversation_history or [],
         }
 
@@ -103,6 +105,8 @@ class IntentAnalysis(BaseModel):
     category: str | None = None
     service: str | None = None
     location: str | None = None
+    confidence: float | None = None
+    reason: str | None = None
 
 
 class LocationAnalysis(BaseModel):

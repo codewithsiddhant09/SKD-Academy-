@@ -1,3 +1,5 @@
+import { MarkdownMessage } from './MarkdownMessage';
+
 export function FaqPolicyPanel({ faqItems }: { faqItems: Array<{ question: string; answer: string; source: string; confidence: string }> }) {
   return (
     <div className="rounded-[32px] border border-white/80 bg-white/90 p-6 shadow-soft">
@@ -13,7 +15,10 @@ export function FaqPolicyPanel({ faqItems }: { faqItems: Array<{ question: strin
           <div key={item.question} className="rounded-[28px] border border-secondary/20 bg-secondary/5 p-4">
             <p className="font-semibold text-text">Question</p>
             <p className="mt-2 text-sm text-text/70">{item.question}</p>
-            <p className="mt-3 text-sm text-text/70">Answer: {item.answer}</p>
+            <div className="mt-3 text-sm text-text/70">
+              <span className="font-medium text-text">Answer: </span>
+              <MarkdownMessage content={item.answer} variant="user" />
+            </div>
             <p className="mt-3 text-xs uppercase tracking-[0.24em] text-secondary">Source: {item.source} | Confidence: {item.confidence}</p>
           </div>
         ))}

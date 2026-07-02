@@ -37,7 +37,7 @@ class OrchestratorService:
             discovery_agent=SalonDiscoveryAgent(),
             ranking_agent=SalonRankingAgent(),
             faq_agent=FaqAgent(),
-            booking_agent=BookingAgent(),
+            booking_agent=BookingAgent(categories=categories, category_agent=CategoryAgent()),
             booking_service=BookingService(),
             category_service=category_service,
         )

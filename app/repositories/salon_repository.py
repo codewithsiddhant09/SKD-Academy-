@@ -21,6 +21,7 @@ from typing import Any
 
 from app.core.config import get_settings
 from app.core.logging import get_logger
+from app.utils.location import sanitize_location
 from app.utils.text import title_case_safe
 
 logger = get_logger(__name__)
@@ -156,18 +157,27 @@ class SalonRepository:
         if db is None or not location:
             return set()
 
-        logger.info("USER_LOCATION: %s", location)
+        cleaned = sanitize_location(location) or location.strip()
+        logger.info("USER_LOCATION: raw=%s cleaned=%s", location, cleaned)
         vendor_ids: set[Any] = set()
         users = db[self._settings.mongodb_users_collection]
         q = {
             **self._active_vendor_filter(),
-            "businessAddress": self._regex(location),
+            "businessAddress": self._regex(cleaned),
         }
         logger.info("MONGO_QUERY: users.find(%s)", q)
-        for doc in users.find(q, {"_id": 1}):
+        for doc in users.find(q, {"_id": 1, "businessName": 1, "businessAddress": 1}):
             vendor_ids.add(doc["_id"])
 
         logger.info("TOTAL_MATCHES (by location): %s", len(vendor_ids))
+        if vendor_ids:
+            sample = users.find_one({"_id": {"$in": list(vendor_ids)[:1]}}, {"businessName": 1, "businessAddress": 1})
+            if sample:
+                logger.info(
+                    "FIRST_LOCATION_MATCH: name=%s address=%s",
+                    sample.get("businessName"),
+                    (sample.get("businessAddress") or "")[:80],
+                )
         return vendor_ids
 
     def get_salons_by_category(self, category: str) -> set[Any]:
@@ -419,3 +429,46 @@ class SalonRepository:
         result = sorted(cities)
         logger.info("CITIES_BY_CATEGORY[%s]: %s", category, result)
         return result
+
+    def find_vendor_by_name(
+        self,
+        salon_name: str,
+        location_hint: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Look up an active vendor by businessName (optional location filter)."""
+        db = self._database()
+        if db is None or not salon_name or not salon_name.strip():
+            return None
+
+        query: dict[str, Any] = {
+            **self._active_vendor_filter(),
+            "businessName": self._regex(salon_name.strip()),
+        }
+        if location_hint:
+            query["businessAddress"] = self._regex(location_hint.strip())
+
+        users = db[self._settings.mongodb_users_collection]
+        doc = users.find_one(
+            query,
+            {"businessName": 1, "businessAddress": 1, "profileImage": 1, "logo": 1},
+        )
+        if doc:
+            return doc
+
+        # Fuzzy contains match when exact regex match fails.
+        for candidate in users.find(
+            {**self._active_vendor_filter(), "businessName": {"$exists": True}},
+            {"businessName": 1, "businessAddress": 1, "profileImage": 1, "logo": 1},
+        ):
+            name = str(candidate.get("businessName") or "")
+            if not name:
+                continue
+            name_l = name.lower()
+            target_l = salon_name.strip().lower()
+            if target_l in name_l or name_l in target_l:
+                if location_hint:
+                    addr = str(candidate.get("businessAddress") or "").lower()
+                    if location_hint.strip().lower() not in addr:
+                        continue
+                return candidate
+        return None

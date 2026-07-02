@@ -11,13 +11,22 @@ from app.agents.intent_agent import IntentAgent
 from app.agents.location_agent import LocationAgent
 from app.agents.salon_discovery_agent import SalonDiscoveryAgent
 from app.agents.salon_ranking_agent import SalonRankingAgent
+from app.agents.semantic_intent_classifier import SemanticIntentClassifier
 from app.core.logging import get_logger
 from app.memory.conversation_store import ConversationStore
 from app.models.enums import IntentType
+from app.utils.location import sanitize_location
 from app.utils.text import title_case_safe
 from app.models.schemas import BookingPayload, IntentAnalysis
 from app.models.state import GraphState
-from app.services.booking_service import BookingService
+from app.graph.booking_orchestration import (
+    BOOKING_SLOT_PRIORITY,
+    BookingEntityState,
+    compute_missing_slots,
+    decide_booking_action,
+    is_generic_salon_phrase,
+)
+from app.repositories.salon_repository import SalonRepository
 
 logger = get_logger(__name__)
 
@@ -48,11 +57,16 @@ class OrchestratorWorkflow:
         self.booking_agent = booking_agent
         self.booking_service = booking_service
         self.category_service = category_service
+        self.semantic_classifier = SemanticIntentClassifier()
+        self._salon_repo = SalonRepository()
 
         graph = StateGraph(GraphState)
         graph.add_node("detect_intent", self.detect_intent)
         graph.add_node("small_talk", self.small_talk)
         graph.add_node("category_list", self.category_list)
+        graph.add_node("category_detail", self.category_detail)
+        graph.add_node("bookly_platform_info", self.bookly_platform_info)
+        graph.add_node("bookly_ai_info", self.bookly_ai_info)
         graph.add_node("faq_policy", self.faq_policy)
         graph.add_node("service_prepare", self.service_prepare)
         graph.add_node("service_check", self.service_check)
@@ -68,6 +82,9 @@ class OrchestratorWorkflow:
             {
                 "small_talk": "small_talk",
                 "category_list": "category_list",
+                "category_detail": "category_detail",
+                "bookly_platform_info": "bookly_platform_info",
+                "bookly_ai_info": "bookly_ai_info",
                 "faq_policy": "faq_policy",
                 "service_prepare": "service_prepare",
                 "booking": "booking",
@@ -87,6 +104,9 @@ class OrchestratorWorkflow:
         )
         graph.add_edge("small_talk", END)
         graph.add_edge("category_list", END)
+        graph.add_edge("category_detail", END)
+        graph.add_edge("bookly_platform_info", END)
+        graph.add_edge("bookly_ai_info", END)
         graph.add_edge("faq_policy", END)
         graph.add_edge("discover", END)
         graph.add_edge("booking", END)
@@ -95,10 +115,70 @@ class OrchestratorWorkflow:
         self.app = graph.compile()
 
     def detect_intent(self, state: GraphState) -> GraphState:
-        logger.info("USER_QUERY: %s", state["user_message"])
+        message = state["user_message"]
+        logger.info("USER_QUERY: %s", message)
         history = self.memory.get_history(state["session_id"])
+        state["history"] = history
+
+        # Location follow-up after salon discovery prompt — skip LLM (avoids token blow-ups on "Noida", etc.)
+        session_memory = self.memory.get_session_memory(state["session_id"])
+        if self._awaiting_location(state):
+            pending_service = session_memory.selected_service or self.get_last_service_query(state)
+            pending_category = session_memory.selected_category
+            candidate = message.strip()
+            if candidate and len(candidate.split()) <= 5 and (pending_service or pending_category):
+                cleaned = sanitize_location(candidate) or candidate
+                service = pending_service or pending_category
+                state["intent_analysis"] = IntentAnalysis(
+                    intent=IntentType.SERVICE_SEARCH,
+                    service=service,
+                    category=pending_category,
+                    location=cleaned,
+                    confidence=0.95,
+                    reason="User provided location after salon discovery prompt.",
+                )
+                logger.info(
+                    "DETECTED_INTENT: service_search (location follow-up) service=%s location=%s",
+                    service,
+                    cleaned,
+                )
+                return state
+
+        # Step 1–2: semantic understanding + normalized intent (before LLM / keyword heuristics)
+        semantic = self.semantic_classifier.classify(message)
+        if semantic:
+            state["intent_analysis"] = IntentAnalysis(
+                intent=semantic.intent,
+                confidence=semantic.confidence,
+                reason=semantic.reason,
+            )
+            logger.info(
+                "DETECTED_INTENT: %s confidence=%s%% reason=%s",
+                semantic.intent.value,
+                semantic.confidence_pct,
+                semantic.reason,
+            )
+            state["history"] = history
+            return state
+
+        # Specific category detail (e.g. "Tell me about Hair") — before LLM can misroute to list/FAQ
+        category_detail = self._detect_category_detail(message)
+        if category_detail:
+            state["intent_analysis"] = IntentAnalysis(
+                intent=IntentType.CATEGORY_DETAIL,
+                category=category_detail,
+                confidence=0.92,
+                reason=f"User asked about the {category_detail} service category.",
+            )
+            logger.info(
+                "DETECTED_INTENT: category_detail confidence=92%% reason=User asked about %s",
+                category_detail,
+            )
+            state["history"] = history
+            return state
+
         analysis = self.intent_agent.analyze(
-            message=state["user_message"],
+            message=message,
             categories=self.categories,
             history=history,
         )
@@ -110,32 +190,34 @@ class OrchestratorWorkflow:
         intent = state["intent_analysis"].intent
         session_id = state["session_id"]
         user_message = state["user_message"]
-        
+        session_memory = self.memory.get_session_memory(session_id)
+
         logger.info("ROUTING: Starting intent-based routing for message: %s", user_message)
         logger.info("DETECTED_INTENT: %s", intent)
 
         # ---------------------------------------------------------------- #
         # Intent priority (highest first):
-        #   1. Small Talk  -> never triggers booking / category / RAG
-        #   2. Category List -> answered directly from the Categories API
-        # These are deterministic and run before all other routing so that
-        # greetings and category-list requests bypass the LLM/RAG paths.
+        #   1. Booking (active session, confirmation, slot collection)
+        #   2. Salon / service search
+        #   3. Category list
+        #   4. Category detail
+        #   5. FAQ / policy (RAG) — with booking resume when interrupted
+        #   6. Greeting / small talk
+        #   7. General fallback
         # ---------------------------------------------------------------- #
-        if self._small_talk_reply(user_message) is not None:
-            logger.info("SELECTED_AGENT: small_talk (intent priority 1)")
-            return "small_talk"
 
-        if self._is_category_list_request(user_message):
-            logger.info("SELECTED_AGENT: category_list (intent priority 2)")
-            return "category_list"
-
-        pending_service = self.get_last_service_query(state) or self.memory.get_session_memory(session_id).selected_service
-        session_memory = self.memory.get_session_memory(session_id)
+        pending_service = self.get_last_service_query(state) or session_memory.selected_service
+        booking_stage = self.memory.get_booking_stage(session_id)
         if (
             (self.is_location_only(user_message) or self._awaiting_location(state))
             and pending_service
             and not session_memory.awaiting_confirmation
         ):
+            candidate = user_message.strip()
+            if candidate and (self.is_location_only(user_message) or len(candidate.split()) <= 5):
+                self._prepare_booking_discovery_route(session_id, user_message, state)
+                logger.info("SELECTED_AGENT: discovery_agent (location reply for booking)")
+                return "service_prepare"
             if not self.memory.get_booking_stage(session_id):
                 state["intent_analysis"] = IntentAnalysis(
                     intent=IntentType.SERVICE_SEARCH,
@@ -144,13 +226,61 @@ class OrchestratorWorkflow:
                 logger.info("SELECTED_AGENT: discovery_agent (location reply for pending service)")
                 return "service_prepare"
 
-        if intent in {IntentType.FAQ, IntentType.POLICY, IntentType.APPOINTMENT_CANCELLATION}:
+        if booking_stage == "awaiting_location" and not session_memory.awaiting_confirmation:
+            if self._extract_location(user_message) or self.is_location_only(user_message):
+                self._prepare_booking_discovery_route(session_id, user_message, state)
+                logger.info("SELECTED_AGENT: discovery_agent (awaiting_location reply)")
+                return "service_prepare"
+            logger.info("SELECTED_AGENT: booking_agent (awaiting location)")
+            state["booking_stage"] = "awaiting_location"
+            return "booking"
+
+        # --- FAQ interrupt during active booking (must run before booking resume) ---
+        awaiting_confirm = (
+            session_memory.awaiting_confirmation or booking_stage == "awaiting_confirmation"
+        )
+        # Yes / No / change requests during confirmation are booking turns, not FAQ interrupts.
+        is_confirmation_turn = awaiting_confirm and (
+            self._is_booking_confirmation(user_message)
+            or self._is_booking_decline(user_message)
+            or self._detect_booking_modification(user_message) is not None
+        )
+        if (
+            not is_confirmation_turn
+            and (
+                intent in {IntentType.FAQ, IntentType.POLICY, IntentType.APPOINTMENT_CANCELLATION}
+                or self._is_policy_or_faq_message(user_message)
+            )
+            and (
+                self._has_booking_in_progress(session_id)
+                or session_memory.awaiting_confirmation
+                or booking_stage == "awaiting_confirmation"
+            )
+        ):
+            state["resume_booking_after_faq"] = True
+            self.memory.update_session_memory(session_id, booking_status="paused")
+            logger.info("BOOKING_INTERRUPT: FAQ during active booking — will resume after answer")
             logger.info("SELECTED_AGENT: faq_agent (intent: %s)", intent)
             logger.info("RAG_TRIGGERED: True")
             return "faq_policy"
-        
-        # Check if we're in post-discovery booking flow (skip to date/time collection)
-        booking_stage = self.memory.get_booking_stage(session_id)
+
+        # --- Salon discovery before booking when schedule is complete but no salon chosen ---
+        if self._should_rediscover_for_location_change(session_id, user_message, state):
+            self._prepare_booking_discovery_route(session_id, user_message, state)
+            logger.info("SELECTED_AGENT: discovery_agent (location change — re-query salons)")
+            return "service_prepare"
+
+        if self._should_discover_salons_for_booking(session_id, user_message, state):
+            self._prepare_booking_discovery_route(session_id, user_message, state)
+            logger.info("SELECTED_AGENT: discovery_agent (salon search before booking confirmation)")
+            return "service_prepare"
+
+        # --- Priority 1: Booking ------------------------------------------------
+        if booking_stage == "awaiting_salon":
+            logger.info("SELECTED_AGENT: booking_agent (awaiting salon selection from cards)")
+            state["booking_stage"] = "awaiting_salon"
+            return "booking"
+
         if booking_stage == "awaiting_confirmation" or session_memory.awaiting_confirmation:
             logger.info("SELECTED_AGENT: booking_agent (awaiting customer confirmation)")
             state["booking_stage"] = "awaiting_confirmation"
@@ -160,7 +290,7 @@ class OrchestratorWorkflow:
             logger.info("SELECTED_AGENT: booking_agent (post-discovery booking stage)")
             state["booking_stage"] = booking_stage
             return "booking"
-        
+
         if self.memory.has_active_booking_session(session_id):
             logger.info("SELECTED_AGENT: booking_agent (active booking session)")
             return "booking"
@@ -184,12 +314,13 @@ class OrchestratorWorkflow:
                     return "booking"
 
         if intent == IntentType.APPOINTMENT_BOOKING:
-            if self.is_booking_details(user_message):
-                logger.info("SELECTED_AGENT: booking_agent (detailed booking request)")
+            if self._should_use_booking_agent(user_message, session_id):
+                logger.info("SELECTED_AGENT: booking_agent (explicit booking with extracted entities)")
                 return "booking"
             logger.info("SELECTED_AGENT: discovery_agent (generic booking request)")
             return "service_prepare"
 
+        # --- Priority 2: Salon / service search ---------------------------------
         if intent in {
             IntentType.SERVICE_SEARCH,
             IntentType.SALON_SEARCH,
@@ -199,46 +330,141 @@ class OrchestratorWorkflow:
             logger.info("SELECTED_AGENT: discovery_agent (intent: %s)", intent)
             return "service_prepare"
 
-        # Heuristic safety net: a salon/vendor list request that the classifier
-        # mislabeled (e.g. "give the list of vendors in Noida") still routes to
-        # discovery as a salon-search instead of general conversation.
         if self._is_salon_search(user_message):
             logger.info("SELECTED_AGENT: discovery_agent (heuristic salon_search)")
             return "service_prepare"
 
+        # --- Priority 3: Category detail (specific category — before list) ---------------
+        if intent == IntentType.CATEGORY_DETAIL or self._detect_category_detail(user_message):
+            logger.info("SELECTED_AGENT: category_detail")
+            return "category_detail"
+
+        # --- Priority 4: Category list ------------------------------------------
+        if intent == IntentType.CATEGORY_LIST or self._is_category_list_request(user_message):
+            logger.info("SELECTED_AGENT: category_list (Categories API)")
+            return "category_list"
+
+        # --- Priority 5: Bookly platform vs AI (deterministic — never RAG) ---
+        if intent == IntentType.BOOKLY_PLATFORM_INFORMATION or self._is_bookly_platform_question(user_message):
+            logger.info("SELECTED_AGENT: bookly_platform_info")
+            logger.info("RAG_TRIGGERED: False")
+            return "bookly_platform_info"
+
+        if intent == IntentType.BOOKLY_AI_INFORMATION or self._is_bookly_ai_question(user_message):
+            logger.info("SELECTED_AGENT: bookly_ai_info")
+            logger.info("RAG_TRIGGERED: False")
+            return "bookly_ai_info"
+
+        # --- Priority 5: Greeting / small talk (never RAG) ------------------------
+        if self._small_talk_reply(user_message) is not None:
+            logger.info("SELECTED_AGENT: small_talk")
+            return "small_talk"
+
+        # --- Priority 6: FAQ / policy (RAG) -------------------------------------
+        if intent in {IntentType.FAQ, IntentType.POLICY, IntentType.APPOINTMENT_CANCELLATION} or self._is_policy_or_faq_message(user_message):
+            logger.info("SELECTED_AGENT: faq_agent (intent: %s)", intent)
+            logger.info("RAG_TRIGGERED: True")
+            return "faq_policy"
+
+        # --- Priority 7: Fallback -----------------------------------------------
         logger.info("SELECTED_AGENT: general_agent (general conversation)")
         logger.info("RAG_TRIGGERED: False")
         return "general"
 
     # ------------------------------------------------------------------ #
+    # Bookly platform vs AI assistant — separate intents, never mixed
+    # ------------------------------------------------------------------ #
+    _BOOKLY_PLATFORM_REPLY = (
+        "Bookly is a salon and wellness appointment booking platform that helps customers "
+        "discover nearby salons, explore beauty and wellness services, compare service providers, "
+        "and book appointments online. It also enables users to manage bookings, payments, "
+        "cancellations, reviews, and recommendations through a seamless digital experience."
+    )
+    _BOOKLY_AI_REPLY = (
+        "I am Bookly's AI Assistant.\n\n"
+        "I can help you discover salons, explore services, book appointments, and answer "
+        "questions about Bookly's policies and features.\n\n"
+        "How may I assist you today?"
+    )
+
+    @staticmethod
+    def _mentions_bookly_ai(text: str) -> bool:
+        """True when the user is asking about the assistant/chatbot, not the platform."""
+        ai_markers = (
+            "assistant",
+            "chatbot",
+            "chat bot",
+            " are you ",
+            "who are you",
+            "what are you",
+            "what can you",
+            "how can you help",
+            "how can you assist",
+            "what is this bot",
+            "what is this chatbot",
+            "who is this",
+            "what is your name",
+        )
+        padded = f" {text} "
+        if any(m in text for m in ai_markers):
+            return True
+        if " ai " in padded or text.endswith(" ai") or text.startswith("ai "):
+            return True
+        if "bookly ai" in text or "bookly assistant" in text:
+            return True
+        return False
+
+    def _is_bookly_ai_question(self, message: str) -> bool:
+        """Detect questions about this chatbot / AI assistant."""
+        return self.semantic_classifier.is_ai_question(message)
+
+    def _is_bookly_platform_question(self, message: str) -> bool:
+        """Detect questions about the Bookly platform (not the AI assistant)."""
+        if self._is_bookly_ai_question(message):
+            return False
+        return self.semantic_classifier.is_platform_question(message)
+
+    def bookly_platform_info(self, state: GraphState) -> GraphState:
+        state["reply"] = self._BOOKLY_PLATFORM_REPLY
+        state["intent_analysis"] = IntentAnalysis(intent=IntentType.BOOKLY_PLATFORM_INFORMATION)
+        logger.info("BOOKLY_PLATFORM_INFO: %s", state["user_message"])
+        return state
+
+    def bookly_ai_info(self, state: GraphState) -> GraphState:
+        state["reply"] = self._BOOKLY_AI_REPLY
+        state["intent_analysis"] = IntentAnalysis(intent=IntentType.BOOKLY_AI_INFORMATION)
+        logger.info("BOOKLY_AI_INFO: %s", state["user_message"])
+        return state
+
+    # ------------------------------------------------------------------ #
     # Small Talk layer (Issue #1) — deterministic, no LLM / RAG / booking
     # ------------------------------------------------------------------ #
     _SMALL_TALK_GREETING = (
-        "Hello and welcome to Bookly.\n\n"
-        "I hope you're doing well today.\n\n"
-        "How may I assist you?"
+        "Hello!\n\n"
+        "Welcome to Bookly.\n\n"
+        "I'm here to help you discover salons, answer your questions, and book appointments.\n\n"
+        "How may I assist you today?"
     )
-    _SMALL_TALK_HOW_ARE_YOU = (
-        "Thank you for asking.\n\n"
-        "I'm doing well and ready to assist you with salon discovery, "
-        "appointments, and Bookly related questions."
+    _SMALL_TALK_GREETING_WITH_WELLBEING = (
+        "Hello!\n\n"
+        "Welcome to Bookly.\n\n"
+        "I'm doing well, thank you for asking.\n\n"
+        "I'm here to help you discover salons, answer your questions, and book appointments.\n\n"
+        "How may I assist you today?"
     )
+    _SMALL_TALK_HOW_ARE_YOU = _SMALL_TALK_GREETING_WITH_WELLBEING
     _SMALL_TALK_THANKS = (
         "You're most welcome.\n\n"
-        "Please let me know if there's anything else I can help you with."
+        "Please let me know if there is anything else I can help you with."
     )
-    _SMALL_TALK_IDENTITY = (
-        "I am Bookly's AI appointment assistant.\n\n"
-        "I can help you discover salons, book appointments, and answer questions "
-        "about our services and policies.\n\n"
-        "How may I assist you?"
+    _SMALL_TALK_GOODBYE = (
+        "Thank you for visiting Bookly.\n\n"
+        "Have a wonderful day, and feel free to return whenever you need assistance."
     )
-    _SMALL_TALK_CAPABILITY = (
-        "I can assist you with the following:\n\n"
-        "• Discovering salons by location\n"
-        "• Finding services by category\n"
-        "• Booking appointments\n"
-        "• Answering questions about Bookly's services and policies\n\n"
+    _SMALL_TALK_NICE_TO_MEET = (
+        "It is a pleasure to meet you.\n\n"
+        "Welcome to Bookly. I am here to help you discover salons, book appointments, "
+        "and answer any questions you may have.\n\n"
         "How may I assist you today?"
     )
 
@@ -274,27 +500,25 @@ class OrchestratorWorkflow:
                     "thanks a lot", "thank you so much"} or text.startswith("thank "):
             return self._SMALL_TALK_THANKS
 
-        # Identity
-        if text in {"who are you", "what are you", "who is this",
-                    "what is your name", "whats your name", "who r u"}:
-            return self._SMALL_TALK_IDENTITY
-
-        # Capability
-        if (text in {"what can you do", "what do you do", "how can you help",
-                     "how can you assist", "what can you help me with",
-                     "what can you help with", "how do you work"}
-                or text.startswith("what can you")
-                or text.startswith("how can you help")
-                or text.startswith("how can you assist")):
-            return self._SMALL_TALK_CAPABILITY
-
-        # How are you
+        # How are you / how's your day
         if (text in {"how are you", "how are you doing", "how r u", "how are u",
                      "hows it going", "how is it going", "how do you do",
-                     "how are things", "how you doing"}
+                     "how are things", "how you doing", "hows your day",
+                     "how is your day", "how's your day"}
                 or text.startswith("how are you")
-                or text.startswith("how r u")):
+                or text.startswith("how r u")
+                or "hows your day" in text
+                or "how is your day" in text):
             return self._SMALL_TALK_HOW_ARE_YOU
+
+        # Goodbye / good night
+        if text in {"bye", "goodbye", "good bye", "see you", "see ya", "take care",
+                    "good night", "goodnight", "gn", "bye bye"} or text.startswith("goodbye"):
+            return self._SMALL_TALK_GOODBYE
+
+        # Nice to meet you
+        if "nice to meet you" in text or "pleasure to meet you" in text:
+            return self._SMALL_TALK_NICE_TO_MEET
 
         # Greetings
         greetings = ("hi", "hello", "hey", "greetings", "good morning",
@@ -315,6 +539,8 @@ class OrchestratorWorkflow:
     # Category-list layer (Issue #2) — answered straight from Categories API
     # ------------------------------------------------------------------ #
     def _is_category_list_request(self, message: str) -> bool:
+        if self.semantic_classifier.is_category_list(message):
+            return True
         text = self._normalize_small_talk(message)
         if not text:
             return False
@@ -328,7 +554,8 @@ class OrchestratorWorkflow:
             "category list", "categories list", "service categories",
             "list of categories", "show me categories", "show all categories",
             "list all categories", "what categories", "which categories",
-            "all categories",
+            "all categories", "give me category list", "available service categories",
+            "what services do you provide", "what categories are available",
         )
         if any(p in text for p in direct):
             return True
@@ -370,18 +597,141 @@ class OrchestratorWorkflow:
         body = "\n".join(f"• {name}" for name in names)
         state["reply"] = (
             f"Available Categories:\n\n{body}\n\n"
-            "Please select a category or tell me the service you are looking for."
+            "How can I assist you with one of these services?"
         )
         state["intent_analysis"] = IntentAnalysis(intent=IntentType.CATEGORY_LIST)
         logger.info("CATEGORY_LIST_RETURNED: %s categories -> %s", len(names), names)
         return state
+
+    def _get_active_category_names(self) -> list[str]:
+        if self.category_service is not None:
+            try:
+                return [c.name for c in self.category_service.get_categories(force_refresh=False)]
+            except Exception:
+                pass
+        return list(self.categories)
+
+    def _detect_category_detail(self, message: str) -> str | None:
+        """Return matched category name when user asks about a specific category."""
+        text = self._normalize_small_talk(message)
+        if not text:
+            return None
+        if self._is_category_list_request(message):
+            return None
+
+        category_names = self._get_active_category_names()
+        lower_names = {n.lower(): n for n in category_names}
+
+        patterns = (
+            r"tell me about\s+(?P<cat>.+)",
+            r"tell me more about\s+(?P<cat>.+)",
+            r"explain\s+(?P<cat>.+)",
+            r"what is\s+(?P<cat>.+?)(?:\?|$)",
+            r"what are\s+(?P<cat>.+?)(?:\?|$)",
+            r"describe\s+(?P<cat>.+)",
+            r"info(?:rmation)?\s+(?:on|about)\s+(?P<cat>.+)",
+        )
+        for pattern in patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if not match:
+                continue
+            candidate = match.group("cat").strip(" .?!")
+            if candidate in lower_names:
+                return lower_names[candidate]
+            for key, canonical in lower_names.items():
+                if candidate == key or candidate.startswith(key) or key in candidate:
+                    return canonical
+
+        # Bare category name when message is short (e.g. user says "Hair" after list)
+        if len(text.split()) <= 2 and text in lower_names:
+            return lower_names[text]
+        return None
+
+    def category_detail(self, state: GraphState) -> GraphState:
+        category = self._detect_category_detail(state["user_message"]) or ""
+        session_id = state["session_id"]
+        self.memory.update_session_memory(
+            session_id,
+            selected_category=category,
+            last_intent="category_detail",
+        )
+        state["reply"] = (
+            f"Certainly!\n\n"
+            f"{category} is one of our available service categories.\n\n"
+            f"It includes various {category.lower()}-related beauty and grooming services "
+            f"offered by our partner salons.\n\n"
+            f"Would you like me to recommend nearby salons that provide {category} services?"
+        )
+        state["intent_analysis"] = IntentAnalysis(
+            intent=IntentType.CATEGORY_DETAIL,
+            category=category,
+        )
+        logger.info("CATEGORY_DETAIL: %s", category)
+        return state
+
+    def _has_booking_in_progress(self, session_id: str) -> bool:
+        """True when an in-progress booking should resume after an FAQ interrupt."""
+        mem = self.memory.get_session_memory(session_id)
+        stage = self.memory.get_booking_stage(session_id)
+        if mem.awaiting_confirmation or stage in {"awaiting_date", "awaiting_time", "awaiting_confirmation"}:
+            return True
+        if self.memory.has_active_booking_session(session_id):
+            return True
+        draft = self.memory.get_booking_draft(session_id)
+        return any(getattr(draft, f) for f in self.booking_agent.REQUIRED_FIELDS)
+
+    def _booking_resume_prompt(self, session_id: str) -> str:
+        """Next booking prompt after an FAQ interrupt."""
+        mem = self.memory.get_session_memory(session_id)
+        draft = self.memory.get_booking_draft(session_id)
+        if mem.awaiting_confirmation or self.memory.get_booking_stage(session_id) == "awaiting_confirmation":
+            return (
+                "Please confirm your booking when you are ready, or let me know if you "
+                "would like to change any detail."
+            )
+        _, missing = self.booking_agent.booking_data_completeness_check(draft)
+        if not missing:
+            return "Please confirm your booking when you are ready."
+        field = missing[0]
+        prompts = {
+            "date": "Could you please share your preferred appointment date?",
+            "time": "Could you please share your preferred appointment time?",
+            "salon": "Could you please select your preferred salon?",
+            "service": "Could you please let me know which service you would like to book?",
+        }
+        return prompts.get(field, "Could you please share the next booking detail?")
+
+    def _should_resume_booking_after_faq(self, session_id: str) -> bool:
+        """Detect FAQ interrupt during booking — uses session memory (LangGraph edge routing does not persist state flags)."""
+        mem = self.memory.get_session_memory(session_id)
+        stage = self.memory.get_booking_stage(session_id)
+        if mem.booking_status == "paused":
+            return True
+        if mem.awaiting_confirmation or stage in {"awaiting_date", "awaiting_time", "awaiting_confirmation"}:
+            return True
+        return self.memory.has_active_booking_session(session_id)
 
     def faq_policy(self, state: GraphState) -> GraphState:
         logger.info("EXECUTING_AGENT: faq_agent")
         logger.info("RAG_PIPELINE: Retrieving from knowledge base")
         answer = self.faq_agent.answer(state["user_message"])
         logger.info("ANSWER: %s", answer)
-        state["reply"] = answer
+        session_id = state["session_id"]
+        # Resume booking when FAQ was asked mid-flow (memory flag survives graph routing).
+        if state.get("resume_booking_after_faq") or self._should_resume_booking_after_faq(session_id):
+            resume = self._booking_resume_prompt(session_id)
+            state["reply"] = f"Sure.\n\n{answer}\n\nNow let's continue your booking.\n\n{resume}"
+            mem = self.memory.get_session_memory(session_id)
+            status = "awaiting_confirmation" if mem.awaiting_confirmation else "collecting"
+            self.memory.update_session_memory(session_id, booking_status=status)
+            logger.info("BOOKING_RESUMED: after FAQ interrupt")
+        else:
+            state["reply"] = answer
+        analysis = state.get("intent_analysis")
+        if analysis:
+            state["intent_analysis"] = analysis
+        else:
+            state["intent_analysis"] = IntentAnalysis(intent=IntentType.FAQ)
         return state
 
     def service_prepare(self, state: GraphState) -> GraphState:
@@ -401,8 +751,16 @@ class OrchestratorWorkflow:
 
         # ---------------------------------------------------------------- #
         # Step 2: Extract LOCATION independently (LLM hint -> message -> history).
+        # When the bot just asked for a location, trust the plain user reply.
         # ---------------------------------------------------------------- #
-        location = analysis.location or self._extract_location(message)
+        location = None
+        if self._awaiting_location(state):
+            candidate = message.strip()
+            if candidate and len(candidate.split()) <= 5 and not self.is_generic_booking_request(candidate):
+                location = candidate
+
+        if not location:
+            location = analysis.location or self._extract_location(message)
         if not location and self.is_location_only(message):
             location = self._extract_location_from_message(message) or message.strip()
         if not location:
@@ -457,8 +815,9 @@ class OrchestratorWorkflow:
             location = session_memory.preferred_location
 
         if location:
-            state["location"] = location
-        logger.info("LOCATION_DETECTED: %s", location)
+            cleaned = sanitize_location(location) or location.strip()
+            state["location"] = cleaned
+        logger.info("LOCATION_DETECTED: raw=%s normalized=%s", message, state.get("location"))
 
         memory_updates: dict[str, str | None] = {"last_intent": analysis.intent.value}
         if state.get("service"):
@@ -474,7 +833,13 @@ class OrchestratorWorkflow:
         """True when the most recent assistant turn asked for the preferred location."""
         for msg in reversed(state.get("history", [])):
             if msg["role"] == "assistant":
-                return "preferred location" in msg["content"].lower()
+                lower = msg["content"].lower()
+                return (
+                    "preferred location" in lower
+                    or "recommend nearby salons" in lower
+                    or "available salons nearby" in lower
+                    or "show you the available salons" in lower
+                )
         return False
 
     def _extract_location_from_message(self, message: str) -> str | None:
@@ -498,15 +863,17 @@ class OrchestratorWorkflow:
     # names a concrete service (SERVICE_SEARCH) vs. just asks for a salon list.
     _SERVICE_KEYWORDS = (
         "hair", "haircut", "smoothing", "smoothening", "keratin", "coloring", "colouring",
-        "color", "colour", "makeup", "make up", "facial", "wax", "waxing", "pedicure",
+        "color", "colour", "makeup", "make up", "facial", "face", "wax", "waxing", "pedicure",
         "manicure", "nail", "nails", "henna", "spa", "massage", "bridal", "threading",
-        "beard", "shave", "grooming",
+        "beard", "shave", "grooming", "treatment",
     )
     _SALON_TARGET_WORDS = ("salon", "salons", "vendor", "vendors", "parlour", "parlor", "shop", "shops")
     _LOCATION_STOPWORDS = {
         "who", "that", "which", "please", "and", "the", "a", "an", "can", "could",
         "provide", "providing", "service", "services", "me", "for", "by", "with",
-        "available", "near", "around", "is", "are", "to",
+        "available", "near", "around", "is", "are", "to", "on", "at",
+        "tomorrow", "today", "monday", "tuesday", "wednesday", "thursday",
+        "friday", "saturday", "sunday", "am", "pm",
     }
 
     def _has_service_keyword(self, message: str) -> bool:
@@ -538,6 +905,18 @@ class OrchestratorWorkflow:
         if known:
             return known
 
+        # "at Glow Salon, Noida on ..." — city follows salon name after comma.
+        salon_city = re.search(
+            r"\b(?:at|in)\s+[^,]{2,80},\s*([A-Za-z][A-Za-z\s]{1,40}?)"
+            r"(?:\s+(?:on|at|tomorrow|today)\b|\s+\d{1,2}|\s*$)",
+            message,
+            flags=re.IGNORECASE,
+        )
+        if salon_city:
+            candidate = sanitize_location(salon_city.group(1).strip())
+            if candidate:
+                return title_case_safe(candidate)
+
         match = re.search(
             r"\b(?:in|at|near|around|within|located in)\s+(.+)",
             message,
@@ -546,7 +925,19 @@ class OrchestratorWorkflow:
         if not match:
             return None
 
-        words = re.findall(r"[A-Za-z]+", match.group(1))
+        clause = match.group(1).split(",")[0]
+        clause = re.split(r"\bon\s*\d{1,2}/", clause, maxsplit=1, flags=re.IGNORECASE)[0]
+        clause = re.split(r"\b\d{1,2}/\d{1,2}/\d{4}\b", clause, maxsplit=1)[0]
+        clause = re.split(
+            r"\s+on\s+(?:tomorrow|today|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b",
+            clause,
+            maxsplit=1,
+            flags=re.IGNORECASE,
+        )[0]
+        clause = re.split(r"\s+at\s+", clause, maxsplit=1, flags=re.IGNORECASE)[0]
+        clause = re.split(r"\s+(?:tomorrow|today)\b", clause, maxsplit=1, flags=re.IGNORECASE)[0]
+
+        words = re.findall(r"[A-Za-z]+", clause)
         loc_words: list[str] = []
         for word in words:
             if word.lower() in self._LOCATION_STOPWORDS:
@@ -556,21 +947,436 @@ class OrchestratorWorkflow:
                 break
         if not loc_words:
             return None
-        return title_case_safe(" ".join(loc_words))
+        candidate = title_case_safe(" ".join(loc_words))
+        if self._salon_repo.find_vendor_by_name(candidate):
+            return None
+        return candidate
+
+    def _extract_salon_from_message_clause(self, message: str) -> str | None:
+        """Extract salon from 'at {Salon}, {City}' or trailing 'at {Salon}'."""
+        match = re.search(
+            r"\bat\s+([^,]{2,80}),\s*[A-Za-z]",
+            message,
+            flags=re.IGNORECASE,
+        )
+        if match:
+            name = match.group(1).strip(" .,-")
+            if name and not is_generic_salon_phrase(name):
+                return title_case_safe(name)
+        match = re.search(
+            r"\bat\s+((?:[A-Za-z0-9][A-Za-z0-9\s&'.-]{1,80}?Salon))\s*(?:$|on\s|,\s)",
+            message,
+            flags=re.IGNORECASE,
+        )
+        if match:
+            name = match.group(1).strip(" .,-")
+            if name and not is_generic_salon_phrase(name):
+                return title_case_safe(name)
+        return None
+
+    def _resolve_booking_entities(
+        self,
+        session_id: str,
+        message: str,
+    ) -> tuple[BookingPayload, str | None]:
+        """Merge extracted booking fields with session memory."""
+        lookup = self.memory.get_salon_lookup(session_id)
+        draft = self.memory.get_booking_draft(session_id)
+        preview = self.booking_agent.extract_booking_fields(message, draft, lookup)
+        session_memory = self.memory.get_session_memory(session_id)
+
+        location = self._extract_location(message) or session_memory.preferred_location
+        if location:
+            location = sanitize_location(location) or location
+
+        return preview, location
+
+    def _booking_schedule_complete(self, payload: BookingPayload) -> bool:
+        return bool(
+            payload.date
+            and payload.time
+            and payload.date.strip()
+            and payload.time.strip()
+        )
+
+    def _booking_schedule_ready(
+        self,
+        session_id: str,
+        message: str,
+        payload: BookingPayload,
+    ) -> bool:
+        """True when date+time are known or the message carries a full schedule hint."""
+        if self._booking_schedule_complete(payload):
+            return True
+        if not payload.time or not str(payload.time).strip():
+            return False
+        return self._message_has_schedule(message)
+
+    def _salon_is_user_selected(self, session_id: str, payload: BookingPayload) -> bool:
+        if not payload.salon or not str(payload.salon).strip():
+            return False
+        lookup = self.memory.get_salon_lookup(session_id)
+        if not lookup:
+            return False
+        salon_key = payload.salon.strip().lower()
+        if salon_key in lookup:
+            return True
+        return any(salon_key in name or name in salon_key for name in lookup)
+
+    def _has_service_and_location(
+        self,
+        session_id: str,
+        message: str,
+        payload: BookingPayload | None = None,
+    ) -> bool:
+        preview, location = (
+            (payload, self._extract_location(message) or self.memory.get_session_memory(session_id).preferred_location)
+            if payload is not None
+            else self._resolve_booking_entities(session_id, message)
+        )
+        if not location:
+            location = self.memory.get_session_memory(session_id).preferred_location
+        service = preview.service or self.memory.get_session_memory(session_id).selected_service
+        return bool(service and location)
+
+    def _should_discover_salons_for_booking(
+        self,
+        session_id: str,
+        message: str,
+        state: GraphState,
+    ) -> bool:
+        """Route to MongoDB salon search when booking details exist but no salon was chosen."""
+        session_memory = self.memory.get_session_memory(session_id)
+        if session_memory.awaiting_confirmation:
+            return False
+
+        booking_stage = self.memory.get_booking_stage(session_id)
+        if booking_stage == "awaiting_confirmation":
+            return False
+
+        preview, location = self._resolve_booking_entities(session_id, message)
+        if self._salon_is_user_selected(session_id, preview):
+            return False
+
+        if not self._has_service_and_location(session_id, message, preview):
+            return False
+
+        entity_state = self._compute_booking_entity_state(session_id, message)
+        if entity_state.action == "confirm":
+            return False
+        if entity_state.salon_verified:
+            return False
+
+        intent = state.get("intent_analysis")
+        explicit_booking = self._is_explicit_booking_request(message)
+        booking_intent = bool(intent and intent.intent == IntentType.APPOINTMENT_BOOKING)
+        return explicit_booking or booking_intent or self.is_booking_details(message)
+
+    def _should_rediscover_for_location_change(
+        self,
+        session_id: str,
+        message: str,
+        state: GraphState,
+    ) -> bool:
+        """Re-run salon discovery when the customer changes location after seeing cards."""
+        session_memory = self.memory.get_session_memory(session_id)
+        if session_memory.awaiting_confirmation:
+            return False
+
+        lookup = self.memory.get_salon_lookup(session_id)
+        booking_stage = self.memory.get_booking_stage(session_id)
+        if not lookup and booking_stage != "awaiting_salon":
+            return False
+
+        new_location = self._extract_location(message)
+        if not new_location and self.is_location_only(message):
+            new_location = sanitize_location(message.strip()) or message.strip()
+
+        if not new_location:
+            return False
+
+        current = session_memory.preferred_location
+        if current and new_location.lower() == current.lower():
+            return False
+
+        preview, _ = self._resolve_booking_entities(session_id, message)
+        service = preview.service or session_memory.selected_service
+        return bool(service)
+
+    def _prepare_booking_discovery_route(
+        self,
+        session_id: str,
+        message: str,
+        state: GraphState,
+    ) -> None:
+        """Persist booking slots and aim discovery at MongoDB before confirmation."""
+        preview, location = self._resolve_booking_entities(session_id, message)
+        session_memory = self.memory.get_session_memory(session_id)
+        service = preview.service or session_memory.selected_service
+        category = preview.category or session_memory.selected_category
+        if service and location:
+            stripped = self._strip_location_clause(service).strip()
+            if stripped:
+                service = stripped
+                preview.service = service
+        if service and not category:
+            category = self.category_agent.map_category(service, self.categories)
+
+        # Keep schedule slots; never auto-assign salon before card selection.
+        preview.salon = None
+        preview.salon_id = None
+        self.memory.set_booking_draft(session_id, preview)
+        self.memory.end_booking_session(session_id)
+        self.memory.update_session_memory(
+            session_id,
+            selected_service=service,
+            selected_category=category,
+            preferred_location=location,
+            appointment_date=preview.date,
+            appointment_time=preview.time,
+            selected_salon=None,
+            salon_id=None,
+            awaiting_confirmation=False,
+            booking_summary_shown=False,
+            booking_status="discovering",
+        )
+        self.memory.set_booking_stage(session_id, "awaiting_salon")
+
+        state["intent_analysis"] = IntentAnalysis(
+            intent=IntentType.SERVICE_SEARCH,
+            service=service,
+            category=category,
+            location=location,
+            confidence=0.95,
+            reason="Salon discovery required before booking confirmation.",
+        )
+
+    def _resolve_named_salon(
+        self,
+        salon_name: str,
+        location_hint: str | None = None,
+    ) -> tuple[str, str, str | None] | None:
+        """Verify salon in MongoDB; return (name, vendor_id, city_from_address)."""
+        if is_generic_salon_phrase(salon_name):
+            return None
+        vendor = self._salon_repo.find_vendor_by_name(salon_name, location_hint)
+        if not vendor:
+            return None
+        name = title_case_safe(str(vendor.get("businessName") or salon_name))
+        vendor_id = str(vendor.get("_id"))
+        city = self._salon_repo._clean_city(str(vendor.get("businessAddress") or ""))
+        return name, vendor_id, city
+
+    def _compute_booking_entity_state(
+        self,
+        session_id: str,
+        message: str,
+    ) -> BookingEntityState:
+        """Merge extracted entities, validate, and compute priority-ordered missing slots."""
+        preview, location = self._resolve_booking_entities(session_id, message)
+        session_memory = self.memory.get_session_memory(session_id)
+
+        service = preview.service or session_memory.selected_service
+        category = preview.category or session_memory.selected_category
+        if service and location:
+            stripped = self._strip_location_clause(service).strip()
+            if stripped:
+                service = stripped
+
+        location = location or session_memory.preferred_location
+        date = preview.date or session_memory.appointment_date
+        time = preview.time or session_memory.appointment_time
+
+        salon = preview.salon
+        salon_id = preview.salon_id
+        if not salon:
+            salon = self._extract_salon_from_message_clause(message)
+        if salon and is_generic_salon_phrase(salon):
+            salon = None
+            salon_id = None
+
+        salon_verified = self._salon_is_user_selected(session_id, preview)
+        if not salon_verified and salon:
+            resolved = self._resolve_named_salon(salon, location)
+            if resolved:
+                salon, salon_id, inferred_city = resolved
+                salon_verified = True
+                if not location and inferred_city:
+                    location = inferred_city
+
+        service_valid = bool(
+            service
+            and self.booking_agent._is_plausible_service(service)
+        )
+        date_valid = bool(date and self.booking_agent._is_valid_date(date))
+        time_valid = bool(time and self.booking_agent._is_valid_time(time))
+
+        missing = compute_missing_slots(
+            service=service if service_valid else None,
+            location=location,
+            salon_verified=salon_verified,
+            date=date if date_valid else None,
+            time=time if time_valid else None,
+            service_valid=service_valid,
+            date_valid=date_valid,
+            time_valid=time_valid,
+        )
+        action, next_slot = decide_booking_action(missing)
+
+        return BookingEntityState(
+            service=service if service_valid else service,
+            category=category,
+            location=location,
+            salon=salon if salon_verified else None,
+            salon_id=salon_id if salon_verified else None,
+            date=date if date_valid else date,
+            time=time if time_valid else time,
+            salon_verified=salon_verified,
+            missing=missing,
+            action=action,
+            next_slot=next_slot,
+        )
+
+    def _sync_entity_state_to_draft(
+        self,
+        session_id: str,
+        entity: BookingEntityState,
+    ) -> BookingPayload:
+        draft = entity.to_payload()
+        if entity.category:
+            draft.category = entity.category
+        self.memory.set_booking_draft(session_id, draft)
+        memory_updates: dict[str, str | None] = {
+            "appointment_date": draft.date,
+            "appointment_time": draft.time,
+        }
+        if draft.service:
+            memory_updates["selected_service"] = draft.service
+        if entity.category:
+            memory_updates["selected_category"] = entity.category
+        if entity.location:
+            memory_updates["preferred_location"] = entity.location
+        if entity.salon_verified and draft.salon:
+            memory_updates["selected_salon"] = draft.salon
+            memory_updates["salon_id"] = draft.salon_id
+        self.memory.update_session_memory(session_id, **memory_updates)
+        return draft
 
     def _detect_service(self, message: str) -> str | None:
-        """Return a cleaned service phrase, or None when no service is named."""
+        """Return a cleaned canonical service phrase, or None when no service is named."""
         if not self._has_service_keyword(message):
             return None
-        cleaned = self._strip_location_clause(message)
-        cleaned = re.sub(
-            r"\b(i want|i need|i would like|i'd like|looking for|book|reserve|please|"
-            r"give me|can i get|get me|i am looking for|show me)\b",
-            "",
-            cleaned,
-            flags=re.IGNORECASE,
-        ).strip(" .,-")
-        return cleaned or None
+        return self.booking_agent.extract_service_from_message(message)
+
+    def _should_use_booking_agent(self, message: str, session_id: str) -> bool:
+        """Route explicit booking phrases to the booking agent when entities are extractable."""
+        entity = self._compute_booking_entity_state(session_id, message)
+        if entity.action == "discover":
+            return False
+        if entity.action == "confirm":
+            return True
+        if entity.action == "ask":
+            return bool(
+                self._is_explicit_booking_request(message)
+                or self.is_booking_details(message)
+                or entity.service
+            )
+        lookup = self.memory.get_salon_lookup(session_id)
+        preview = self.booking_agent.extract_booking_fields(message, BookingPayload(), lookup)
+        if not self._is_explicit_booking_request(message):
+            return False
+        return bool(preview.service or preview.salon or preview.date or preview.time)
+
+    def _format_booking_progress_reply(self, draft: BookingPayload, missing: str) -> str:
+        """Natural conversational prompts while collecting booking slots (no category lectures)."""
+        service = draft.service or "appointment"
+        salon = draft.salon
+
+        if missing == "service":
+            return (
+                "Certainly!\n\n"
+                "Could you please let me know which service you would like to book?"
+            )
+        if missing == "location":
+            return (
+                f"I'd be happy to help you book a {service}.\n\n"
+                f"May I know your preferred location so I can show you the available salons nearby?"
+            )
+        if missing == "salon" and draft.service:
+            return (
+                f"Certainly!\n\n"
+                f"I'd be happy to help you book a {draft.service} appointment.\n\n"
+                f"Please select your preferred salon from the list above to continue."
+            )
+        if missing == "date" and salon:
+            return (
+                f"Certainly!\n\n"
+                f"I'd be happy to help you book a {service} appointment at {salon}.\n\n"
+                f"May I know your preferred appointment date?"
+            )
+        if missing == "date":
+            return (
+                f"Certainly!\n\n"
+                f"I'd be happy to help you book a {service} appointment.\n\n"
+                f"May I know your preferred appointment date?"
+            )
+        if missing == "time" and salon:
+            return (
+                f"Great choice.\n\n"
+                f"May I know your preferred appointment time for {service} at {salon}?"
+            )
+        if missing == "time":
+            return (
+                f"Absolutely.\n\n"
+                f"May I know your preferred appointment time?"
+            )
+        return "Let me help you with that. Could you share the next booking detail?"
+
+    def _next_booking_slot_to_collect(
+        self,
+        session_id: str,
+        message: str,
+    ) -> tuple[str, BookingEntityState]:
+        """Return (next_slot, entity_state) using priority orchestration."""
+        entity = self._compute_booking_entity_state(session_id, message)
+        if entity.action == "discover":
+            return "discover", entity
+        if entity.action == "confirm":
+            return "confirm", entity
+        return entity.next_slot or "service", entity
+
+    def _route_booking_collection(
+        self,
+        state: GraphState,
+        session_id: str,
+        entity: BookingEntityState,
+    ) -> GraphState | None:
+        """Handle ask/discover/confirm actions from entity state. Returns state or None."""
+        if entity.action == "discover":
+            self._prepare_booking_discovery_route(session_id, state["user_message"], state)
+            prepared = self.service_prepare(state)
+            if prepared.get("location_analysis"):
+                return self.discover(prepared)
+            prepared.setdefault(
+                "reply",
+                "May I know your preferred location so I can recommend nearby salons?",
+            )
+            return prepared
+
+        draft = self._sync_entity_state_to_draft(session_id, entity)
+
+        if entity.action == "confirm":
+            logger.info("BOOKING_DETAILS_EXTRACTED: all fields present — showing confirmation summary")
+            return self._present_booking_summary(state, session_id, draft)
+
+        slot = entity.next_slot or "service"
+        self.memory.start_booking_session(session_id)
+        if slot in {"date", "time", "location"}:
+            self.memory.set_booking_stage(session_id, f"awaiting_{slot}")
+            state["booking_stage"] = f"awaiting_{slot}"
+        state["reply"] = self._format_booking_progress_reply(draft, slot)
+        state["booking_payload"] = draft
+        return state
 
     def service_check(self, state: GraphState) -> GraphState:
         # Salon-search bypasses service identification entirely.
@@ -614,25 +1420,11 @@ class OrchestratorWorkflow:
         if not location:
             if state.get("salon_search"):
                 state["reply"] = (
-                    "Certainly.\n\n"
-                    "Which location would you like me to search for salons in?\n\n"
-                    "Examples:\n"
-                    "• Noida\n"
-                    "• Dubai\n"
-                    "• Abu Dhabi\n"
-                    "• Sharjah"
+                    "May I know your preferred location so I can recommend nearby salons?"
                 )
                 return state
-            service = state.get("service") or ""
-            category = state.get("category") or ""
-            intro = ""
-            if service and category:
-                intro = f"Thank you.\n\n{service} falls under our {category} category.\n\n"
-            elif service:
-                intro = "Thank you.\n\n"
             state["reply"] = (
-                f"{intro}"
-                "Please share your preferred location so I can find available salons near you."
+                "May I know your preferred location so I can recommend nearby salons?"
             )
             return state
 
@@ -679,6 +1471,19 @@ class OrchestratorWorkflow:
             location_analysis.normalized_location,
             salon_search,
         )
+        if recommendations:
+            logger.info(
+                "API_RESPONSE_SALONS: count=%s first=%s",
+                len(recommendations),
+                recommendations[0].model_dump(),
+            )
+        else:
+            logger.warning(
+                "API_RESPONSE_SALONS: empty for location=%s category=%s service=%s",
+                location_analysis.normalized_location,
+                category,
+                service,
+            )
         location_display = state.get("location") or location_analysis.normalized_location
 
         if recommendations:
@@ -692,25 +1497,31 @@ class OrchestratorWorkflow:
                 f"I found several salons in {location_display}{offer_clause}.\n\n"
                 f"Please select your preferred salon to continue."
             )
-            # Auto-populate salon name and service for booking flow
             session_id = state["session_id"]
             draft = self.memory.get_booking_draft(session_id)
             if service:
                 draft.service = service
             if category:
                 draft.category = category
-            draft.salon = top.salon_name
-            draft.salon_id = top.vendor_id
+            # Never auto-select a salon — customer must choose from cards.
+            draft.salon = None
+            draft.salon_id = None
             self.memory.set_booking_draft(session_id, draft)
-            # Persist a salon name -> id lookup so later selection resolves salonId
             lookup = {
                 title_case_safe(r.salon_name).lower(): (r.vendor_id or "")
                 for r in state["recommendations"]
             }
             self.memory.set_salon_lookup(session_id, lookup)
-            # Set booking stage to only ask for date/time
             self.memory.start_booking_session(session_id)
-            self.memory.set_booking_stage(session_id, "awaiting_date")
+            if draft.date and draft.time:
+                self.memory.set_booking_stage(session_id, "awaiting_salon")
+                state["booking_stage"] = "awaiting_salon"
+            elif draft.date:
+                self.memory.set_booking_stage(session_id, "awaiting_time")
+                state["booking_stage"] = "awaiting_time"
+            else:
+                self.memory.set_booking_stage(session_id, "awaiting_date")
+                state["booking_stage"] = "awaiting_date"
             self.memory.sync_session_from_draft(
                 session_id,
                 draft,
@@ -718,7 +1529,6 @@ class OrchestratorWorkflow:
                 preferred_location=location_display,
                 selected_category=category,
             )
-            state["booking_stage"] = "awaiting_date"
         else:
             if salon_search or not service:
                 state["reply"] = (
@@ -778,7 +1588,7 @@ class OrchestratorWorkflow:
         heading = (
             "Updated appointment details:"
             if updated
-            else "Please review your appointment details:"
+            else "Please confirm your booking details:"
         )
         return (
             f"{heading}\n\n"
@@ -786,12 +1596,7 @@ class OrchestratorWorkflow:
             f"Salon:\n{payload.salon}\n\n"
             f"Date:\n{payload.date}\n\n"
             f"Time:\n{payload.time}\n\n"
-            "Would you like me to confirm this appointment?\n\n"
-            "Reply:\n"
-            "Yes\n"
-            "Confirm\n"
-            "Book It\n"
-            "Proceed"
+            "Would you like me to confirm this booking?"
         )
 
     def _present_booking_summary(
@@ -817,6 +1622,7 @@ class OrchestratorWorkflow:
             session_id,
             booking_summary_shown=True,
             awaiting_confirmation=True,
+            booking_status="awaiting_confirmation",
             last_intent="appointment_booking",
         )
         state["reply"] = self._format_booking_summary(payload, updated=updated)
@@ -990,6 +1796,30 @@ class OrchestratorWorkflow:
         draft = self.memory.get_booking_draft(session_id)
         lookup = self.memory.get_salon_lookup(session_id)
         session_memory = self.memory.get_session_memory(session_id)
+        analysis = state.get("intent_analysis")
+
+        # Safety net: policy/FAQ questions must never be handled as booking confirmations.
+        awaiting_confirm = (
+            session_memory.awaiting_confirmation
+            or self.memory.get_booking_stage(session_id) == "awaiting_confirmation"
+        )
+        is_confirmation_turn = awaiting_confirm and (
+            self._is_booking_confirmation(state["user_message"])
+            or self._is_booking_decline(state["user_message"])
+            or self._detect_booking_modification(state["user_message"]) is not None
+        )
+        if not is_confirmation_turn and (
+            (analysis and analysis.intent in {
+                IntentType.FAQ,
+                IntentType.POLICY,
+                IntentType.APPOINTMENT_CANCELLATION,
+            })
+            or self._is_policy_or_faq_message(state["user_message"])
+        ):
+            if session_memory.awaiting_confirmation or self._has_booking_in_progress(session_id):
+                state["resume_booking_after_faq"] = True
+                logger.info("BOOKING_INTERRUPT: FAQ routed from booking node safety net")
+                return self.faq_policy(state)
 
         if (
             session_memory.awaiting_confirmation
@@ -1002,6 +1832,14 @@ class OrchestratorWorkflow:
         if salon_selected:
             self.memory.set_booking_draft(session_id, draft)
             self.memory.start_booking_session(session_id)
+            self.memory.update_session_memory(
+                session_id,
+                selected_salon=draft.salon,
+                salon_id=draft.salon_id,
+            )
+            if draft.date and draft.time:
+                logger.info("SALON_SELECTED: all slots present — showing confirmation summary")
+                return self._present_booking_summary(state, session_id, draft)
             if not draft.date:
                 self.memory.set_booking_stage(session_id, "awaiting_date")
             elif not draft.time:
@@ -1009,6 +1847,13 @@ class OrchestratorWorkflow:
             booking_stage = self.memory.get_booking_stage(session_id) or "awaiting_date"
         else:
             booking_stage = state.get("booking_stage") or self.memory.get_booking_stage(session_id)
+            if booking_stage == "awaiting_salon":
+                state["reply"] = (
+                    "Please select your preferred salon from the list above to continue."
+                )
+                state["booking_stage"] = "awaiting_salon"
+                state["booking_payload"] = draft
+                return state
             if not booking_stage and draft.salon and draft.service:
                 booking_stage = "awaiting_date"
 
@@ -1019,18 +1864,13 @@ class OrchestratorWorkflow:
         )
         self.booking_agent.log_detected_entities(updated)
         self.memory.set_booking_draft(session_id, updated)
-        self.memory.sync_session_from_draft(session_id, updated, last_intent="appointment_booking")
 
-        is_complete, missing_fields = self.booking_agent.booking_data_completeness_check(updated)
-        if is_complete:
-            logger.info("BOOKING_DETAILS_EXTRACTED: all fields present — showing confirmation summary")
-            return self._present_booking_summary(state, session_id, updated)
-
-        logger.info("BOOKING_MISSING_FIELDS: %s", missing_fields)
+        entity = self._compute_booking_entity_state(session_id, state["user_message"])
 
         if updated.date and self.booking_agent.is_past_date(updated.date):
             logger.info("BOOKING_DATE: %s", updated.date)
             logger.info("VALIDATION_RESULT: REJECTED (past date)")
+            entity.date = None
             updated.date = None
             self.memory.set_booking_draft(session_id, updated)
             self.memory.update_session_memory(session_id, appointment_date=None)
@@ -1044,45 +1884,11 @@ class OrchestratorWorkflow:
             state["booking_payload"] = updated
             return state
 
-        missing = missing_fields[0] if missing_fields else None
-        if missing == "date":
-            self.memory.start_booking_session(session_id)
-            self.memory.set_booking_stage(session_id, "awaiting_date")
-            state["reply"] = (
-                "Please provide your preferred appointment date.\n\n"
-                "(Format: DD Month YYYY — for example, 15 July 2026)"
-            )
-            state["booking_stage"] = "awaiting_date"
-            state["booking_payload"] = updated
-            return state
+        routed = self._route_booking_collection(state, session_id, entity)
+        if routed is not None:
+            return routed
 
-        if missing == "time":
-            self.memory.set_booking_stage(session_id, "awaiting_time")
-            state["booking_stage"] = "awaiting_time"
-            state["reply"] = (
-                "Please provide your preferred appointment time.\n\n"
-                "(Format: HH AM/PM — for example, 4 PM)"
-            )
-            state["booking_payload"] = updated
-            return state
-
-        if missing == "service":
-            state["reply"] = (
-                "To assist you, could you please let me know which service you are looking for?"
-            )
-            state["booking_payload"] = updated
-            return state
-
-        if missing == "salon":
-            state["reply"] = "Please select your preferred salon to continue."
-            state["booking_payload"] = updated
-            return state
-
-        state["reply"] = (
-            "Please provide your preferred appointment date.\n\n"
-            "(Format: DD Month YYYY — for example, 15 July 2026)"
-        )
-        state["booking_stage"] = "awaiting_date"
+        state["reply"] = self._format_booking_progress_reply(updated, entity.next_slot or "service")
         state["booking_payload"] = updated
         return state
 
@@ -1099,6 +1905,8 @@ class OrchestratorWorkflow:
         """Resolve salon from explicit selection or salon-card lookup."""
         text = message.strip()
         text_lower = text.lower()
+        if is_generic_salon_phrase(text):
+            return draft, False
         if text_lower in {
             "proceed", "continue", "yes", "ok", "okay", "next",
             "confirm", "confirmed", "book it", "looks good", "sure",
@@ -1106,7 +1914,7 @@ class OrchestratorWorkflow:
             return draft, False
 
         salon_choice = self._extract_salon_selection(message)
-        if salon_choice:
+        if salon_choice and not is_generic_salon_phrase(salon_choice):
             draft.salon = salon_choice
             lookup = self.memory.get_salon_lookup(session_id)
             resolved_id = lookup.get(salon_choice.lower())
@@ -1141,6 +1949,8 @@ class OrchestratorWorkflow:
             return draft, True
 
         if lookup and not re.search(r"\d|tomorrow|today|\bam\b|\bpm\b", text_lower):
+            if is_generic_salon_phrase(text):
+                return draft, False
             words = text.split()
             if 1 <= len(words) <= 5 and text_lower not in {"proceed", "continue", "yes", "ok", "okay", "next"}:
                 candidate = title_case_safe(text)
@@ -1198,6 +2008,7 @@ class OrchestratorWorkflow:
 
         self.memory.clear_booking_draft(session_id)
         self.memory.end_booking_session(session_id)
+        self.memory.update_session_memory(session_id, booking_status="completed")
 
         state["intent_analysis"] = IntentAnalysis(
             intent=IntentType.APPOINTMENT_BOOKING,
@@ -1219,12 +2030,17 @@ class OrchestratorWorkflow:
         lower = message.lower()
         return bool(
             self.booking_agent.extract_relative_date(message)
+            or re.search(r"\bon\d{1,2}/\d{1,2}/\d{4}\b", message, re.IGNORECASE)
             or re.search(r"\b\d{1,2}/\d{1,2}/\d{4}\b", message)
             or re.search(r"\b\d{4}-\d{2}-\d{2}\b", message)
             or re.search(r"\b\d{1,2}:\d{2}\s*(?:am|pm)\b", lower)
             or re.search(r"\b\d{1,2}\s*(?:am|pm)\b", lower)
             or "tomorrow" in lower
             or "today" in lower
+            or re.search(
+                r"\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b",
+                lower,
+            )
         )
 
     def _try_route_booking_with_memory(
@@ -1239,11 +2055,29 @@ class OrchestratorWorkflow:
         self.booking_agent.log_detected_entities(preview)
 
         is_complete, missing = self.booking_agent.booking_data_completeness_check(preview)
-        if is_complete:
+        entity = self._compute_booking_entity_state(session_id, message)
+
+        if entity.action == "confirm" and entity.salon_verified:
+            self._sync_entity_state_to_draft(session_id, entity)
+            self.memory.start_booking_session(session_id)
+            state["booking_stage"] = "awaiting_confirmation"
+            return True
+
+        if entity.action == "discover":
+            return False
+
+        if is_complete and self._salon_is_user_selected(session_id, preview):
             self.memory.set_booking_draft(session_id, preview)
             self.memory.start_booking_session(session_id)
             state["booking_stage"] = "awaiting_confirmation"
             return True
+
+        if (
+            is_complete
+            and not entity.salon_verified
+            and self._has_service_and_location(session_id, message, preview)
+        ):
+            return False
 
         has_schedule = self._message_has_schedule(message)
         has_booking_context = bool(
@@ -1255,16 +2089,26 @@ class OrchestratorWorkflow:
             or self.memory.get_session_memory(session_id).selected_salon
         )
         if has_schedule and has_booking_context and len(missing) < 4:
+            if entity.action == "discover":
+                return False
+            if "salon" in missing and self._has_service_and_location(session_id, message, preview):
+                return False
             self.memory.set_booking_draft(session_id, preview)
             self.memory.start_booking_session(session_id)
             if "date" in missing:
                 self.memory.set_booking_stage(session_id, "awaiting_date")
             elif "time" in missing:
                 self.memory.set_booking_stage(session_id, "awaiting_time")
+            elif not entity.location:
+                self.memory.set_booking_stage(session_id, "awaiting_location")
             state["booking_stage"] = self.memory.get_booking_stage(session_id)
             return True
 
         if has_schedule and self._is_explicit_booking_request(message) and len(missing) < 4:
+            if entity.action == "discover":
+                return False
+            if "salon" in missing and self._has_service_and_location(session_id, message, preview):
+                return False
             self.memory.set_booking_draft(session_id, preview)
             self.memory.start_booking_session(session_id)
             state["booking_stage"] = self.memory.get_booking_stage(session_id) or "awaiting_date"
@@ -1281,6 +2125,11 @@ class OrchestratorWorkflow:
             self.memory.set_booking_draft(session_id, preview)
             self.memory.start_booking_session(session_id)
             state["booking_stage"] = self.memory.get_booking_stage(session_id) or "awaiting_date"
+            return True
+
+        if preview.service and self._is_explicit_booking_request(message):
+            self.memory.set_booking_draft(session_id, preview)
+            self.memory.start_booking_session(session_id)
             return True
 
         return False
@@ -1360,6 +2209,7 @@ class OrchestratorWorkflow:
         text = message.lower()
         return bool(
             re.search(r"\d{4}-\d{2}-\d{2}", text)
+            or re.search(r"\bon\d{1,2}/\d{1,2}/\d{4}\b", text)
             or re.search(r"\b\d{1,2}/\d{1,2}/\d{4}\b", text)
             or re.search(r"\d{1,2}:\d{2}", text)
             or re.search(r"\b\d{1,2}\s*(?:am|pm)\b", text)
@@ -1369,10 +2219,25 @@ class OrchestratorWorkflow:
             or "salon" in text
             or re.search(
                 r"\b\d{1,2}\s+(?:january|february|march|april|may|june|july|august|"
-                r"september|october|november|december)\s+\d{4}\b",
+                r"september|october|november|december)(?:\s+\d{4})?\b",
                 text,
             )
         )
+
+    @staticmethod
+    def _is_policy_or_faq_message(message: str) -> bool:
+        """Heuristic for policy/FAQ queries that must route to RAG, not booking."""
+        lower = message.lower()
+        phrases = (
+            "cancellation policy",
+            "cancel policy",
+            "refund policy",
+            "privacy policy",
+            "terms and conditions",
+            "terms of service",
+            "what is the policy",
+        )
+        return any(p in lower for p in phrases)
 
     def get_last_service_query(self, state: GraphState) -> str | None:
         session_id = state.get("session_id")

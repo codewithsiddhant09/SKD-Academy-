@@ -60,7 +60,7 @@ def main() -> int:
     cases = [
         {
             "name": "Case 1: single message with all fields",
-            "message": "Hair Smoothing at Prem Salon Noida on 26/06/2026 at 5 PM",
+            "message": "Hair Smoothing at Prem Salon Noida on 25 July 2026 at 5 PM",
             "expect_created": False,
             "expect_summary": True,
             "expect_missing": [],
@@ -73,7 +73,7 @@ def main() -> int:
         },
         {
             "name": "Case 3: service + date + time only",
-            "message": "Hair Smoothing on 26/06/2026 at 5 PM",
+            "message": "Hair Smoothing on 25 July 2026 at 5 PM",
             "expect_created": False,
             "expect_missing": ["salon"],
         },
@@ -91,7 +91,7 @@ def main() -> int:
         },
         {
             "name": "User bug: two-turn booking",
-            "message": "I want to book an appointment on 26/06/2026 at 5:00 PM.",
+            "message": "I want to book an appointment on 25 July 2026 at 5:00 PM.",
             "prior_messages": ["I want Hair Smoothing at Prem Salon Noida."],
             "expect_created": False,
             "expect_summary": True,
@@ -134,7 +134,7 @@ def main() -> int:
         else:
             print("Booking Created: NO")
         if case.get("expect_summary"):
-            has_summary = "review your appointment details" in result["reply"].lower()
+            has_summary = "confirm your booking details" in result["reply"].lower()
             print(f"Summary Shown: {'YES' if has_summary else 'NO'}")
             if case.get("confirm_after") and has_summary:
                 confirm = orch.chat(result["session_id"], "Yes")
@@ -143,7 +143,7 @@ def main() -> int:
 
         ok = result["created"] == case["expect_created"]
         if case.get("expect_summary") and not case.get("confirm_after"):
-            ok = "review your appointment details" in result["reply"].lower()
+            ok = "confirm your booking details" in result["reply"].lower()
         if case.get("confirm_after"):
             ok = result["created"] is True
         if not case["expect_created"] and case["expect_missing"]:

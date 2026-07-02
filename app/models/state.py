@@ -17,5 +17,6 @@ class GraphState(TypedDict, total=False):
     booking_payload: BookingPayload
     booking_response: dict
     booking_stage: str
+    resume_booking_after_faq: bool
     reply: str
     metadata: dict[str, Any]

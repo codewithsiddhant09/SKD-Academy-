@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { CheckCircle2, Loader2, MapPin, Send, Sparkles } from 'lucide-react';
 import { dashboardData } from '../lib/dashboard-data';
+import { MarkdownMessage } from './MarkdownMessage';
 
 type Recommendation = {
   salon_name: string;
@@ -284,7 +285,11 @@ export function ChatPanel({ onDebugUpdate }: ChatPanelProps) {
             className={`rounded-3xl p-4 ${message.role === 'assistant' ? 'bg-slate-900/95 text-slate-100' : 'ml-auto max-w-[85%] bg-white text-text'}`}
           >
             <p className="text-[11px] uppercase tracking-[0.24em] text-slate-500">{message.role === 'assistant' ? 'Bookly AI' : 'You'}</p>
-            <p className="mt-3 whitespace-pre-wrap text-sm leading-7">{message.content}</p>
+            {message.role === 'assistant' ? (
+              <MarkdownMessage content={message.content} variant="assistant" />
+            ) : (
+              <p className="mt-3 whitespace-pre-wrap text-sm leading-7">{message.content}</p>
+            )}
 
             {message.recommendations?.length ? (
               <div className="mt-4 space-y-4">

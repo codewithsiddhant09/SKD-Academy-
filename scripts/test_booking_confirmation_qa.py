@@ -33,7 +33,7 @@ def chat(orch: OrchestratorService, sid: str, message: str) -> dict:
         "reply": response.reply,
         "structured": response.structured,
         "created": "submitted successfully" in response.reply.lower(),
-        "summary": "review your appointment details" in response.reply.lower()
+        "summary": "confirm your booking details" in response.reply.lower()
         or "updated appointment details" in response.reply.lower(),
         "awaiting_confirmation": mem.get("awaitingConfirmation"),
         "summary_shown": mem.get("bookingSummaryShown"),
@@ -51,7 +51,7 @@ def main() -> int:
 
     # Case 1 — show summary, not create
     sid1 = "c1-" + uuid.uuid4().hex[:8]
-    r1 = chat(orch, sid1, "Hair Smoothing at Prem Salon Noida on 26/06/2026 at 5 PM")
+    r1 = chat(orch, sid1, "Hair Smoothing at Prem Salon Noida on 25 July 2026 at 5 PM")
     print("\nCase 1: all fields in one message")
     print(f"  Summary shown: {r1['summary']}")
     print(f"  Awaiting confirmation: {r1['awaiting_confirmation']}")
@@ -72,7 +72,7 @@ def main() -> int:
 
     # Case 3 — change time, updated summary
     sid3 = "c3-" + uuid.uuid4().hex[:8]
-    chat(orch, sid3, "Hair Smoothing at Prem Salon Noida on 26/06/2026 at 5 PM")
+    chat(orch, sid3, "Hair Smoothing at Prem Salon Noida on 25 July 2026 at 5 PM")
     r3 = chat(orch, sid3, "Change time to 6 PM")
     print("\nCase 3: change time")
     print(f"  Updated summary: {r3['summary']}")
@@ -85,7 +85,7 @@ def main() -> int:
 
     # Case 4 — change salon
     sid4 = "c4-" + uuid.uuid4().hex[:8]
-    chat(orch, sid4, "Hair Smoothing at Prem Salon Noida on 26/06/2026 at 5 PM")
+    chat(orch, sid4, "Hair Smoothing at Prem Salon Noida on 25 July 2026 at 5 PM")
     r4 = chat(orch, sid4, "Change salon to ABC Salon Noida")
     print("\nCase 4: change salon")
     print(f"  Summary/response: {r4['reply'][:120]}...")
@@ -101,7 +101,7 @@ def main() -> int:
 
     # Case 5 — decline
     sid5 = "c5-" + uuid.uuid4().hex[:8]
-    chat(orch, sid5, "Hair Smoothing at Prem Salon Noida on 26/06/2026 at 5 PM")
+    chat(orch, sid5, "Hair Smoothing at Prem Salon Noida on 25 July 2026 at 5 PM")
     r5 = chat(orch, sid5, "No")
     print("\nCase 5: customer declines")
     print(f"  Booking created: {r5['created']}")
