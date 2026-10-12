@@ -68,6 +68,9 @@ class RagStore:
                 break
         return unique
 
+    def count(self) -> int:
+        return self._vectorstore._collection.count()
+
     def as_retriever(self):
         return self._vectorstore.as_retriever(search_kwargs={"k": self.settings.top_k_retrieval})
 

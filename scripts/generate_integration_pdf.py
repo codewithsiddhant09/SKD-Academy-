@@ -220,9 +220,7 @@ def build() -> None:
          "{ session_id, salon?, service?, date?, time? }",
          "{ booking_id, status: confirmed, payload }", "400 Missing fields | 503"),
         ("POST", "/debug-rag", "Debug", "Inspect RAG pipeline.",
-         "{ question }", "{ question, retrieved_chunks[], answer, explanation }", "503"),
-        ("POST", "/debug-intent", "Debug", "Test intent classification.",
-         "{ message }", "{ message, intent, category, service, explanation }", "503"),
+         "{ question }", "{ question, retrieved_chunks[], similarity_scores[], sources[] }", "503"),
         ("POST", "/upload", "Utility", "Upload .docx knowledge document.",
          "multipart file: *.docx", "{ status, filename }", "400 Only .docx"),
     ]

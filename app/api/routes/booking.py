@@ -8,20 +8,12 @@ router = APIRouter()
 
 @router.post("/book-appointment", response_model=BookingResponse)
 def book_appointment(payload: BookAppointmentRequest) -> BookingResponse:
-    if deps.orchestrator_service is None:
+    if deps.assistant is None:
         raise HTTPException(status_code=503, detail="Service not initialized")
 
-    booking_service = deps.orchestrator_service.workflow.booking_service
-    booking_payload = BookingPayload(
-        customer_name=payload.customer_name,
-        phone=payload.phone,
-        salon=payload.salon,
-        service=payload.service,
-        date=payload.date,
-        time=payload.time,
-    )
-    missing = [k for k, v in booking_payload.model_dump().items() if not v]
+    booking_payload = BookingPayload.model_validate(payload.model_dump(exclude={"session_id"}))
+    missing = [f for f in ("customer_name", "phone", "salon", "service", "date", "time") if not getattr(booking_payload, f)]
     if missing:
         raise HTTPException(status_code=400, detail=f"Missing required fields: {', '.join(missing)}")
 
-    return booking_service.create_booking(booking_payload)
+    return deps.assistant.bookings.create_booking(booking_payload)

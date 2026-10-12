@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Bookly AI Appointment Assistant</title>
-    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/socket.io-client@4.5.4/dist/socket.io.min.js"></script>
     <style>
         * {
             margin: 0;
@@ -318,6 +318,8 @@
         const infoEl = document.getElementById('info');
 
         let sessionId = 'session_' + Date.now();
+        // Optional: open index.html?user_id=<Mongo user _id> to chat as a signed-in customer.
+        const userId = new URLSearchParams(window.location.search).get('user_id');
         let isTyping = false;
 
         // Connection events
@@ -401,6 +403,7 @@
                             // Emit salon selection to server
                             socket.emit('user_message', {
                                 session_id: sessionId,
+                                user_id: userId,
                                 message: `Proceed with ${salonName}`
                             });
                         });
@@ -461,6 +464,7 @@
             // Emit to server
             socket.emit('user_message', {
                 session_id: sessionId,
+                user_id: userId,
                 message: text
             });
         }

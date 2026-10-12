@@ -21,6 +21,7 @@ from typing import Any
 
 from app.core.config import get_settings
 from app.core.logging import get_logger
+from app.repositories.mongo import get_database
 from app.utils.location import sanitize_location
 from app.utils.text import title_case_safe
 
@@ -37,48 +38,9 @@ _STOPWORDS = {
 class SalonRepository:
     def __init__(self) -> None:
         self._settings = get_settings()
-        self._db: Any | None = None
-        self._init_attempted = False
-        self._schema_logged = False
 
-    # ------------------------------------------------------------------ #
-    # Connection
-    # ------------------------------------------------------------------ #
     def _database(self) -> Any | None:
-        if self._db is not None:
-            return self._db
-        if self._init_attempted:
-            return None
-
-        self._init_attempted = True
-        uri = self._settings.mongodb_uri
-        if not uri:
-            logger.info("SALON_REPO: MONGODB_URI not configured; MongoDB discovery disabled")
-            return None
-
-        try:
-            from pymongo import MongoClient
-
-            client = MongoClient(uri, serverSelectionTimeoutMS=5000)
-            client.admin.command("ping")
-            self._db = client[self._settings.mongodb_db_name]
-            logger.info("Mongo Connected (db=%s)", self._settings.mongodb_db_name)
-            self._log_schema_once()
-            return self._db
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.warning("SALON_REPO: MongoDB unavailable: %s", exc)
-            self._db = None
-            return None
-
-    def _log_schema_once(self) -> None:
-        if self._schema_logged:
-            return
-        self._schema_logged = True
-        logger.info(
-            "Schema Loaded: salon=users[userType=Vendor] name=businessName "
-            "location=businessAddress services=services[vendorId,categoryId,name] "
-            "category=categories.name rating=avg(reviews.rating)"
-        )
+        return get_database()
 
     def is_available(self) -> bool:
         return self._database() is not None
@@ -110,37 +72,55 @@ class SalonRepository:
         }
 
     def _category_ids_for_name(self, db: Any, category: str) -> list[Any]:
-        """Return ALL category IDs whose name contains `category` (case-insensitive).
+        """IDs of categories named exactly `category` (case-insensitive).
 
-        The DB has BOTH clean names ("Hair", id=6a02...) and legacy names
-        ("Hair servicess", "Hair treatment", etc., older IDs).  Services are
-        only linked to the LEGACY IDs.  Using a contains-match ensures we
-        capture every relevant category regardless of naming era.
+        Exact, not contains: "Hair" must not also match "Hair Removal" or "Hair Coloring".
         """
         coll = db[self._settings.mongodb_categories_collection]
-        docs = list(coll.find({"name": self._regex(category)}))
-        return [doc["_id"] for doc in docs]
+        query = {"name": {"$regex": f"^{re.escape(category.strip())}$", "$options": "i"}}
+        return [doc["_id"] for doc in coll.find(query, {"_id": 1})]
+
+    def list_services(self, category: str, location: str | None = None) -> list[dict[str, Any]]:
+        """Distinct services offered in `category` by active salons (optionally in `location`),
+        with price range and number of salons."""
+        db = self._database()
+        if db is None:
+            return []
+        category_ids = self._category_ids_for_name(db, category)
+        if not category_ids:
+            return []
+        query: dict[str, Any] = {"categoryId": {"$in": category_ids}, "isDeleted": {"$ne": True}}
+        if location:
+            query["vendorId"] = {"$in": list(self.get_salons_by_location(location))}
+        rows = list(db[self._settings.mongodb_services_collection].find(query, {"name": 1, "price": 1, "vendorId": 1}))
+        active = {
+            v["_id"]
+            for v in db[self._settings.mongodb_users_collection].find(
+                {"_id": {"$in": list({r["vendorId"] for r in rows})}, **self._active_vendor_filter()}, {"_id": 1}
+            )
+        }
+        services: dict[str, dict[str, Any]] = {}
+        for r in rows:
+            if r.get("vendorId") not in active or not r.get("name"):
+                continue
+            entry = services.setdefault(r["name"].strip().lower(), {"name": r["name"].strip(), "prices": [], "salons": set()})
+            if r.get("price") is not None:
+                entry["prices"].append(r["price"])
+            entry["salons"].add(r["vendorId"])
+        return [
+            {
+                "service": e["name"],
+                "price_from": min(e["prices"]) if e["prices"] else None,
+                "price_to": max(e["prices"]) if e["prices"] else None,
+                "salons": len(e["salons"]),
+            }
+            for e in sorted(services.values(), key=lambda e: e["name"].lower())
+        ]
 
     @staticmethod
     def _service_tokens(service: str) -> list[str]:
         tokens = re.findall(r"[a-zA-Z]+", service.lower())
         return [t for t in tokens if t not in _STOPWORDS and len(t) > 2]
-
-    def _avg_rating(self, db: Any, vendor_id: Any) -> float | None:
-        coll = db[self._settings.mongodb_reviews_collection]
-        ratings: list[float] = []
-        # reviews.vendorId may be stored as ObjectId or string.
-        for query_id in {vendor_id, str(vendor_id)}:
-            for doc in coll.find({"vendorId": query_id}):
-                try:
-                    ratings.append(float(doc.get("rating")))
-                except (TypeError, ValueError):
-                    continue
-            if ratings:
-                break
-        if not ratings:
-            return None
-        return round(sum(ratings) / len(ratings), 1)
 
     # ------------------------------------------------------------------ #
     # Public query functions (Phase 2)
@@ -201,7 +181,11 @@ class SalonRepository:
         return vendor_ids
 
     def get_salons_by_service(self, service: str) -> set[Any]:
-        """Vendor ids with an active service whose name matches any token in `service`."""
+        """Vendor ids with an active service whose name contains EVERY word of `service`.
+
+        All words must match ("hair smoothing" does not match "Hair Cut"), so a
+        salon is only returned when it really offers the requested service.
+        """
         db = self._database()
         if db is None or not service:
             return set()
@@ -210,7 +194,7 @@ class SalonRepository:
         if not tokens:
             return set()
 
-        pattern = "|".join(re.escape(t) for t in tokens)
+        pattern = "".join(f"(?=.*{re.escape(t)})" for t in tokens)
         services = db[self._settings.mongodb_services_collection]
         vendor_ids: set[Any] = set()
         for doc in services.find(
@@ -221,60 +205,60 @@ class SalonRepository:
                 vendor_ids.add(doc["vendorId"])
         return vendor_ids
 
+    def get_salons_by_name(self, salon_name: str) -> set[Any]:
+        """Vendor ids of active salons whose businessName contains `salon_name`."""
+        db = self._database()
+        if db is None or not salon_name:
+            return set()
+        users = db[self._settings.mongodb_users_collection]
+        query = {**self._active_vendor_filter(), "businessName": self._regex(salon_name)}
+        return {doc["_id"] for doc in users.find(query, {"_id": 1})}
+
     # ------------------------------------------------------------------ #
-    # Combined discovery (Phase 4)
+    # Combined discovery
     # ------------------------------------------------------------------ #
     def discover(
         self,
         location: str | None = None,
         category: str | None = None,
         service: str | None = None,
+        salon_name: str | None = None,
     ) -> list[dict[str, Any]]:
+        """Salons matching ALL given filters (location, service or category, name).
+
+        A specific service takes precedence over its category: matching on the
+        category would also return salons that offer other services in it.
+        """
         db = self._database()
         if db is None:
             return []
 
+        filters: list[set[Any]] = []
         if location:
-            logger.info("Location Received: %s", location)
+            filters.append(self.get_salons_by_location(location))
+        if service:
+            filters.append(self.get_salons_by_service(service))
+        elif category:
+            filters.append(self.get_salons_by_category(category))
+        if salon_name:
+            filters.append(self.get_salons_by_name(salon_name))
+        if not filters:
+            return []
 
-        location_set = self.get_salons_by_location(location) if location else None
-        category_set = self.get_salons_by_category(category) if category else set()
-        service_set = self.get_salons_by_service(service) if service else set()
-        wanted = category_set | service_set
-
-        # Routing logic:
-        # 1. Both location AND service/category specified → strict intersection.
-        # 2. Location only (no category/service requested) → all vendors in area.
-        # 3. Category/service only (no location) → all vendors matching the service.
-        # 4. Service/category was specified but returned nothing → return empty so
-        #    the caller's mock fallback can handle it (do NOT dump all-location results).
-        service_or_category_requested = bool(category or service)
-
-        if location_set is not None and wanted:
-            vendor_ids = location_set & wanted
-        elif location_set is not None and not service_or_category_requested:
-            vendor_ids = location_set
-        elif location_set is not None and service_or_category_requested and not wanted:
-            # Service/category requested but nothing found in DB → signal no match.
-            vendor_ids = set()
-        else:
-            vendor_ids = wanted
-
+        vendor_ids = set.intersection(*filters)
         logger.info(
-            "Query Executed: location=%s category=%s service=%s -> by_location=%s by_category=%s by_service=%s candidates=%s",
-            location,
-            category,
-            service,
-            len(location_set) if location_set is not None else "n/a",
-            len(category_set),
-            len(service_set),
-            len(vendor_ids),
+            "Query Executed: location=%s category=%s service=%s salon_name=%s -> candidates=%s",
+            location, category, service, salon_name, len(vendor_ids),
         )
+        return self._build_salons_batch(db, vendor_ids)
 
-        salons = self._build_salons_batch(db, vendor_ids)
-        logger.info("Matching Salons Found: %s (MongoDB)", len(salons))
-        logger.info("SALON_NAMES: %s", [s.get("salonName") for s in salons])
-        return salons
+    def get_salons_by_ids(self, vendor_ids: list[str]) -> list[dict[str, Any]]:
+        """Salon cards for specific vendor ids (e.g. salons from a user's history)."""
+        from bson import ObjectId
+
+        db = self._database()
+        ids = {ObjectId(v) for v in vendor_ids if ObjectId.is_valid(v)}
+        return self._build_salons_batch(db, ids) if db is not None else []
 
     def _build_salons_batch(self, db: Any, vendor_ids: set[Any]) -> list[dict[str, Any]]:
         """Build all salon cards with a fixed number of queries (no N+1).
@@ -305,17 +289,25 @@ class SalonRepository:
             return []
 
         # 2) Active services grouped by vendor (single query)
-        services_by_vendor: dict[Any, list[str]] = {}
+        services_by_vendor: dict[Any, list[dict[str, Any]]] = {}
         category_ids_by_vendor: dict[Any, set[Any]] = {}
         all_category_ids: set[Any] = set()
         for svc in db[self._settings.mongodb_services_collection].find(
             {"vendorId": {"$in": ids}, "isDeleted": {"$ne": True}},
-            {"name": 1, "categoryId": 1, "vendorId": 1},
+            {"name": 1, "categoryId": 1, "vendorId": 1, "price": 1, "duration": 1},
         ):
             vid = svc.get("vendorId")
-            if svc.get("name"):
-                services_by_vendor.setdefault(vid, []).append(svc["name"])
             cat_id = svc.get("categoryId")
+            if svc.get("name"):
+                services_by_vendor.setdefault(vid, []).append(
+                    {
+                        "id": str(svc["_id"]),
+                        "name": svc["name"],
+                        "price": svc.get("price"),
+                        "duration": svc.get("duration"),
+                        "category_id": cat_id,
+                    }
+                )
             if cat_id is not None:
                 category_ids_by_vendor.setdefault(vid, set()).add(cat_id)
                 all_category_ids.add(cat_id)
@@ -331,7 +323,6 @@ class SalonRepository:
 
         # 4) Ratings grouped by vendor (single query; vendorId may be ObjectId or str)
         rating_acc: dict[str, list[float]] = {}
-        id_str_to_key = {str(i): i for i in ids}
         review_query_ids = ids + [str(i) for i in ids]
         for rev in db[self._settings.mongodb_reviews_collection].find(
             {"vendorId": {"$in": review_query_ids}}, {"vendorId": 1, "rating": 1}
@@ -352,13 +343,24 @@ class SalonRepository:
                 if c in category_name_by_id
             ]
             image = vendor.get("profileImage") or vendor.get("logo") or None
+            offers = [
+                {
+                    "id": o["id"],
+                    "name": o["name"],
+                    "price": o["price"],
+                    "duration": o["duration"],
+                    "category": category_name_by_id.get(o["category_id"]),
+                }
+                for o in services_by_vendor.get(vid, [])
+            ]
             salons.append(
                 {
                     "salonId": str(vid),
                     "salonName": vendor.get("businessName") or "Salon",
                     "rating": rating,
                     "location": vendor.get("businessAddress") or "",
-                    "services": services_by_vendor.get(vid, []),
+                    "services": [o["name"] for o in offers],
+                    "offers": offers,
                     "categories": category_names,
                     "image": image,
                     "redirectUrl": f"/salon/{vid}",
@@ -429,46 +431,3 @@ class SalonRepository:
         result = sorted(cities)
         logger.info("CITIES_BY_CATEGORY[%s]: %s", category, result)
         return result
-
-    def find_vendor_by_name(
-        self,
-        salon_name: str,
-        location_hint: str | None = None,
-    ) -> dict[str, Any] | None:
-        """Look up an active vendor by businessName (optional location filter)."""
-        db = self._database()
-        if db is None or not salon_name or not salon_name.strip():
-            return None
-
-        query: dict[str, Any] = {
-            **self._active_vendor_filter(),
-            "businessName": self._regex(salon_name.strip()),
-        }
-        if location_hint:
-            query["businessAddress"] = self._regex(location_hint.strip())
-
-        users = db[self._settings.mongodb_users_collection]
-        doc = users.find_one(
-            query,
-            {"businessName": 1, "businessAddress": 1, "profileImage": 1, "logo": 1},
-        )
-        if doc:
-            return doc
-
-        # Fuzzy contains match when exact regex match fails.
-        for candidate in users.find(
-            {**self._active_vendor_filter(), "businessName": {"$exists": True}},
-            {"businessName": 1, "businessAddress": 1, "profileImage": 1, "logo": 1},
-        ):
-            name = str(candidate.get("businessName") or "")
-            if not name:
-                continue
-            name_l = name.lower()
-            target_l = salon_name.strip().lower()
-            if target_l in name_l or name_l in target_l:
-                if location_hint:
-                    addr = str(candidate.get("businessAddress") or "").lower()
-                    if location_hint.strip().lower() not in addr:
-                        continue
-                return candidate
-        return None

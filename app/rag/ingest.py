@@ -1,21 +1,20 @@
+"""Rebuild the knowledge base from app/rag/documents/*.md: python -m app.rag.ingest"""
 import shutil
 from pathlib import Path
 
+from app.core.config import get_settings
 from app.rag.vector_store import RagStore, load_docs_from_directory
+
+DOCUMENTS_DIR = Path(__file__).resolve().parent / "documents"
 
 
 def ingest_rag_documents() -> None:
-    base_path = Path(__file__).resolve().parent / "documents"
-    docs = load_docs_from_directory(base_path)
+    docs = load_docs_from_directory(DOCUMENTS_DIR)
     if not docs:
         return
-    from app.core.config import get_settings
-    settings = get_settings()
-    persist_dir = Path(settings.rag_persist_directory)
-    try:
-        if persist_dir.exists():
-            shutil.rmtree(persist_dir)
-    except (OSError, PermissionError):
-        pass
-    store = RagStore()
-    store.upsert_documents(docs)
+    shutil.rmtree(get_settings().rag_persist_directory, ignore_errors=True)
+    RagStore().upsert_documents(docs)
+
+
+if __name__ == "__main__":
+    ingest_rag_documents()

@@ -1,5 +1,5 @@
 """Debug endpoints for QA verification of salon discovery, cities,
-categories and intent detection.
+and categories.
 
 These are diagnostic-only and safe to remove after QA sign-off.
 
@@ -8,13 +8,11 @@ These are diagnostic-only and safe to remove after QA sign-off.
     GET /debug/salons?city=Noida
     GET /debug/salons?category=Hair
     GET /debug/salons?location=Noida&category=Hair&service=Hair+Smoothing
-    GET /debug/intent?q=Show vendors in Noida
 """
 from __future__ import annotations
 
 from fastapi import APIRouter, Query
 
-from app.api import deps
 from app.repositories.salon_repository import SalonRepository
 from app.services.category_service import CategoryService
 
@@ -76,22 +74,4 @@ def debug_categories() -> dict:
         "count": len(categories),
         "source": _category_service.settings.categories_api_url,
         "categories": [{"id": c.id, "name": c.name} for c in categories],
-    }
-
-
-@router.get("/debug/intent")
-def debug_intent(q: str = Query(..., min_length=1)) -> dict:
-    """Classify a query and show intent + extracted entities (Bug 7)."""
-    if deps.orchestrator_service is None:
-        return {"error": "Service not initialized"}
-
-    intent_agent = deps.orchestrator_service.workflow.intent_agent
-    categories = deps.orchestrator_service.workflow.categories
-    analysis = intent_agent.analyze(message=q, categories=categories, history=[])
-    return {
-        "query": q,
-        "intent": analysis.intent,
-        "category": analysis.category,
-        "service": analysis.service,
-        "location": analysis.location,
     }

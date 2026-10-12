@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -51,37 +50,6 @@ class SessionContext(BaseModel):
     business_location: str | None = None
 
 
-class SessionMemory(BaseModel):
-    """Explicit per-session fields persisted for the duration of a chat session."""
-
-    selected_salon: str | None = None
-    selected_service: str | None = None
-    selected_category: str | None = None
-    preferred_location: str | None = None
-    appointment_date: str | None = None
-    appointment_time: str | None = None
-    last_intent: str | None = None
-    salon_id: str | None = None
-    booking_summary_shown: bool = False
-    awaiting_confirmation: bool = False
-    booking_status: str | None = None  # collecting | awaiting_confirmation | paused | completed
-
-    def to_api_dict(self, conversation_history: list[dict[str, str]] | None = None) -> dict[str, Any]:
-        return {
-            "selectedSalon": self.selected_salon,
-            "selectedService": self.selected_service,
-            "selectedCategory": self.selected_category,
-            "preferredLocation": self.preferred_location,
-            "appointmentDate": self.appointment_date,
-            "appointmentTime": self.appointment_time,
-            "lastIntent": self.last_intent,
-            "salonId": self.salon_id,
-            "bookingSummaryShown": self.booking_summary_shown,
-            "awaitingConfirmation": self.awaiting_confirmation,
-            "bookingStatus": self.booking_status,
-            "conversationHistory": conversation_history or [],
-        }
-
 
 class ChatRequest(BaseModel):
     session_id: str = Field(..., min_length=1)
@@ -100,18 +68,16 @@ class SessionStartResponse(BaseModel):
     context: SessionContext
 
 
-class IntentAnalysis(BaseModel):
-    intent: IntentType
+
+
+class ServiceOffer(BaseModel):
+    """One service a salon offers (services collection)."""
+
+    id: str
+    name: str
+    price: float | None = None
+    duration: int | None = None
     category: str | None = None
-    service: str | None = None
-    location: str | None = None
-    confidence: float | None = None
-    reason: str | None = None
-
-
-class LocationAnalysis(BaseModel):
-    normalized_location: str
-    radius_km: int = Field(default=15, ge=1, le=50)
 
 
 class Salon(BaseModel):
@@ -119,20 +85,17 @@ class Salon(BaseModel):
     salon_name: str
     categories: list[str]
     services: list[str]
+    offers: list[ServiceOffer] = Field(default_factory=list)
     location: str
     image: str | None = None
-    rating: float = Field(ge=0, le=5)
-    availability_score: float = Field(default=0.8, ge=0, le=1)
-    distance_km: float = Field(default=0, ge=0)
+    rating: float | None = Field(default=None, ge=0, le=5)
 
 
 class SalonRecommendation(BaseModel):
     vendor_id: str | None = None
     salon_name: str
-    rating: float
-    distance: str
+    rating: float | None = None
     reason: str
-    score: float
     location: str | None = None
     services: list[str] = Field(default_factory=list)
     image: str | None = None
@@ -169,16 +132,6 @@ class ChatResponse(BaseModel):
     recommendations: list[SalonRecommendation] = Field(default_factory=list)
 
 
-class DebugIntentRequest(BaseModel):
-    message: str = Field(..., min_length=1)
-
-
-class DebugIntentResponse(BaseModel):
-    message: str
-    intent: IntentType
-    category: str | None = None
-    service: str | None = None
-    explanation: str
 
 
 class DebugRagRequest(BaseModel):
@@ -189,16 +142,8 @@ class DebugRagResponse(BaseModel):
     question: str
     retrieved_chunks: list[str]
     similarity_scores: list[float]
-    context: str
-    prompt: str
-    answer: str
-    explanation: str | None = None
+    sources: list[str | None]
 
-
-class Message(BaseModel):
-    role: str
-    content: str
-    ts: datetime = Field(default_factory=datetime.utcnow)
 
 
 class HealthResponse(BaseModel):

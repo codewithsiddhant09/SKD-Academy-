@@ -209,22 +209,6 @@ def main() -> int:
     except Exception as exc:
         record("P9", "Categories fetched dynamically", False, str(exc))
 
-    # PHASE 10 — Intent
-    intent_cases = [
-        ("Show vendors in Noida", "salon_search"),
-        ("Hair Smoothing", "service_search"),
-        ("Hair Smoothing in Noida", "service_search"),
-        ("What is Bookly?", "faq"),
-        ("Hello", "small_talk"),
-    ]
-    for q, exp in intent_cases:
-        r = client.get(f"/debug/intent?q={httpx.QueryParams({'q': q})['q']}")
-        if r.status_code == 200:
-            got = str(r.json().get("intent", "")).split(".")[-1].lower()
-            record("P10", f"Intent {q!r}", got == exp, f"got={got} expected={exp}")
-        else:
-            record("P10", f"Intent {q!r}", False, f"status={r.status_code}")
-
     # Summary
     passed = sum(1 for r in report if r.passed)
     failed = [r for r in report if not r.passed]

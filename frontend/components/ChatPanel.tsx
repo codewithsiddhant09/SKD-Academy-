@@ -6,10 +6,11 @@ import { dashboardData } from '../lib/dashboard-data';
 import { MarkdownMessage } from './MarkdownMessage';
 
 type Recommendation = {
+  vendor_id?: string;
   salon_name: string;
-  rating: string;
-  distance: string;
-  service: string;
+  rating?: number | null;
+  location?: string;
+  services?: string[];
   reason: string;
 };
 
@@ -140,6 +141,8 @@ export function ChatPanel({ onDebugUpdate }: ChatPanelProps) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           session_id: sessionId,
+          // Optional: open the page with ?user_id=<Mongo user _id> to chat as a signed-in customer.
+          user_id: new URLSearchParams(window.location.search).get('user_id'),
           message,
           history: messages.map((message) => ({ role: message.role, content: message.content })),
         }),
@@ -233,7 +236,7 @@ export function ChatPanel({ onDebugUpdate }: ChatPanelProps) {
   }
 
   function handleRecommendationAction(recommendation: Recommendation) {
-    sendMessage(`Book ${recommendation.salon_name} for ${recommendation.service}`);
+    sendMessage(`Book ${recommendation.salon_name}`);
   }
 
   const stepItems = [
@@ -294,15 +297,19 @@ export function ChatPanel({ onDebugUpdate }: ChatPanelProps) {
             {message.recommendations?.length ? (
               <div className="mt-4 space-y-4">
                 {message.recommendations.map((recommendation) => (
-                  <div key={recommendation.salon_name} className="rounded-[24px] border border-secondary/20 bg-white p-4 text-text">
+                  <div key={recommendation.vendor_id ?? recommendation.salon_name} className="rounded-[24px] border border-secondary/20 bg-white p-4 text-text">
                     <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                       <div>
                         <p className="font-semibold">{recommendation.salon_name}</p>
-                        <p className="mt-1 text-sm text-slate-600">{recommendation.service}</p>
+                        {recommendation.services?.length ? (
+                          <p className="mt-1 text-sm text-slate-600">{recommendation.services.join(' · ')}</p>
+                        ) : null}
                       </div>
                       <div className="flex flex-wrap items-center gap-2 text-sm text-slate-500">
-                        <span>⭐ {recommendation.rating}</span>
-                        <span className="inline-flex items-center gap-1"><MapPin className="h-3.5 w-3.5" />{recommendation.distance} away</span>
+                        {recommendation.rating ? <span>⭐ {recommendation.rating}</span> : null}
+                        {recommendation.location ? (
+                          <span className="inline-flex items-center gap-1"><MapPin className="h-3.5 w-3.5" />{recommendation.location}</span>
+                        ) : null}
                       </div>
                     </div>
                     <p className="mt-3 text-sm text-slate-600">{recommendation.reason}</p>

@@ -1,0 +1,452 @@
+Bookly – Agentic AI Chatbot Scenarios
+Scenario 1: Smart Recommendation Based on Previous Bookings
+Description
+When a user requests to view or book a service they have previously booked, the AI
+analyses their booking history and recommends the most suitable salon.
+Recommendation Priority
+The AI recommends salons based on the following priority:
+1. Highest Rated Salon by the User
+○ If the user has rated one or more salons for the requested service, the
+salon with the highest rating is recommended first.
+2. Most Frequently Booked Salon
+○ If no ratings are available, the AI recommends the salon where the user
+has booked the same service the most.
+3. Most Recent Booking
+○ If multiple salons have the same booking count, the AI recommends the
+salon where the user most recently booked the service.
+Example Conversation
+User:
+Show me all my previous haircut bookings.
+AI:
+You have booked the Haircut service four times.
+Previous Bookings:
+● Salon A – 2 Bookings – Rated 5 Stars
+● Salon B – 2 Bookings – No Rating
+Based on your previous experience, I recommend Salon A because you have rated it
+the highest.
+Would you like to book your next haircut with Salon A?
+User:
+Yes.
+AI:
+Your preferred salon has been selected. Please provide your preferred appointment
+date and time.
+Scenario 2: Smart Salon Recommendation for a New Booking
+Description
+When a user requests a new booking, the AI searches all available salons and
+recommends the most suitable option using a weighted recommendation model.
+Recommendation Criteria
+The AI evaluates salons based on the following priority:
+Criteria Weight
+Salon Rating 10
+Location 9
+Service Price 8
+Previous Booking History 5
+The salon with the highest overall score is recommended.
+Example Conversation
+User:
+Book a haircut for me on Monday.
+AI:
+Certainly. Please let me know your preferred appointment time so I can find the best
+available salons.
+User:
+5:00 PM.
+AI:
+Based on your preferences, I recommend Bella Ladies Salon.
+Would you like me to submit your booking request for Monday at 5:00 PM?
+User:
+Show more options.
+AI:
+Here are a few more salons that match your requirements:
+● Bella Ladies Salon
+● Glow Beauty Lounge
+● Luna Ladies Salon
+Please select your preferred salon.
+User:
+Glow Beauty Lounge.
+AI:
+Your preferred salon has been selected.
+Would you like me to submit your booking request for Monday at 5:00 PM?
+User:
+Yes.
+AI:
+Your booking request has been submitted successfully. I will notify you once the salon
+accepts your appointment.
+Scenario 3: Rebook Previous Appointment
+Description
+Users can quickly rebook a previously completed appointment.
+The AI does not assume the previous appointment time. Instead, it confirms whether
+the user wants the same appointment time or a different one.
+Example Conversation
+User:
+Rebook my last facial appointment.
+AI:
+Your last facial appointment was at Bella Ladies Salon on 10 June at 4:00 PM.
+Would you like to book the same appointment time or choose a different time?
+User:
+Choose a different time.
+AI:
+Please provide your preferred date and time.
+User:
+Friday at 6:00 PM.
+AI:
+I am checking availability.
+A slot is available at Bella Ladies Salon on Friday at 6:00 PM.
+Would you like me to submit the booking request?
+Scenario 4: Individual and Group Booking Detection
+Description
+The AI automatically determines whether the booking is for an individual or a group
+by analyzing the user's message.
+Individual Booking
+If the message refers only to the user, such as:
+● Book a facial for me.
+● Book my haircut.
+The AI treats the booking as an individual appointment.
+Group Booking
+If the message includes another person, such as:
+● Book for me and my sister.
+● Book for me and my mother.
+● Book for me and Sarah.
+The AI treats the request as a group booking.
+Example Conversation
+User:
+Book a manicure for me and my sister this Saturday.
+AI:
+I understand this is a group booking for two people.
+Please provide your preferred appointment time.
+User:
+5:00 PM.
+AI:
+I am searching for salons that can accommodate both appointments together.
+I found Bella Ladies Salon with availability for two people at 5:00 PM.
+Would you like me to submit the booking request?
+Scenario 5: Occasion-Based Beauty Concierge
+Description
+The AI identifies occasions mentioned by the user and recommends suitable beauty
+services based on the event.
+The recommendations vary depending on the type of occasion.
+Wedding
+For weddings, the AI recommends premium beauty services and complete grooming
+packages.
+Example Conversation
+User:
+I have a wedding next week.
+AI:
+Congratulations on your upcoming event.
+To help you prepare, I recommend the following services:
+● Hair Styling
+● Makeup
+● Facial
+● Hair Spa
+● Manicure
+● Pedicure
+Which services would you like to book?
+User:
+Hair Styling, Makeup and Facial.
+AI:
+Please provide the following details:
+● Preferred location
+● Appointment date
+● Preferred time
+● Budget (Optional)
+Once I have these details, I will recommend the most suitable salons.
+Birthday
+User:
+It is my birthday this weekend.
+AI:
+Happy Birthday in advance.
+Popular services for birthdays include:
+● Hair Styling
+● Makeup
+● Facial
+● Manicure
+● Pedicure
+Which services would you like to book?
+Dinner Date
+User:
+I have a dinner date tomorrow.
+AI:
+For a dinner date, many customers prefer:
+● Hair Styling
+● Express Facial
+● Manicure
+Which services would you like to book?
+Office Event
+User:
+I have an office event tomorrow.
+AI:
+For a professional event, I recommend:
+● Hair Styling
+● Light Makeup
+● Manicure
+Please let me know which services you would like to book.
+Eid Celebration
+User:
+I want to prepare for Eid.
+AI:
+For Eid celebrations, the most popular services are:
+● Hair Spa
+● Facial
+● Threading
+● Manicure
+● Pedicure
+Which services would you like to book?
+Scenario 6: Booking Confirmation Flow
+Description
+Once the user selects the preferred services, the AI completes the booking journey.
+Example Conversation
+AI:
+Please provide your preferred:
+● Location
+● Date
+● Time
+● Budget (Optional)
+User:
+Dubai Marina, 28 June, 5:00 PM, Budget AED 250.
+AI:
+I have found the best matching salon based on your preferences.
+Recommended Salon:
+Bella Ladies Salon
+Reason for Recommendation:
+● Highest customer rating
+● Available at your requested time
+● Within your budget
+● Close to your location
+Would you like me to submit the booking request?
+User:
+Yes.
+AI:
+Your booking request has been submitted successfully.
+I will notify you once the salon accepts your appointment.
+Scenario 7: Salon Acceptance and Payment Request
+Description
+Once the salon accepts the booking request, the user gets notify over the application
+through push notifications and requests payment to confirm the appointment.
+Example Conversation
+AI:
+Your booking request has been accepted by Bella Ladies Salon.
+Booking Details:
+● Service: Hair Styling
+● Date: 28 June
+● Time: 5:00 PM
+● Amount: AED 220
+Please complete your payment within the next 10 minutes to confirm your
+appointment.
+User:
+Proceed to payment.
+AI:
+Redirecting you to the secure payment page.
+Once the payment is completed, your booking will be confirmed.
+AI Decision Logic
+Previous Booking Recommendation
+1. 2. 3. Highest rating provided by the user.
+Highest number of bookings for the same service.
+Most recent booking if multiple salons have the same booking count.
+New Booking Recommendation
+The AI ranks salons using the following weighted criteria:
+Criteria Weight
+Salon Rating 10
+Location 9
+Service Price 8
+Previous Booking History 5
+Individual and Group Booking Detection
+● Messages referring only to the user are treated as individual bookings.
+● Messages including another person (for example, "me and my sister" or "me
+and Sarah") are treated as group bookings.
+Occasion Detection
+The AI automatically detects occasions such as weddings, birthdays, dinner dates,
+office events, Eid celebrations, vacations, graduations, anniversaries, baby showers,
+and similar events. It then recommends beauty services that are appropriate for the
+specific occasion before continuing with the booking process. This enables a more
+personalised and relevant booking experience for every user.
+Why Payment Should Be Triggered Through the Application Instead of
+the Chat?
+Reason 1 Bookings Are Business Transactions, Not Chat Conversations
+AI conversations are temporary by nature. Users may end a conversation, start a new
+one, clear their chat history, or even uninstall and reinstall the application. However, a
+booking is an ongoing process that should continue until it reaches its final outcome,
+regardless of whether the original AI conversation still exists.
+Example Scenario
+29 June
+The user starts a conversation with the AI.
+User:
+I want to book a facial for 1 July at 5:00 PM.
+The AI:
+● Collects the booking details.
+● Searches for suitable salons.
+● Recommends the best option.
+● Submits the booking request to the selected salon.
+The conversation then ends.
+30 June
+The user opens Bookly and starts a completely new AI conversation. The previous
+chat may no longer be visible or may have been archived.
+At 2:00 PM, the salon accepts the booking request.
+Since the original AI conversation is no longer active, the booking process should not
+depend on that conversation to continue.
+Instead, the Bookly backend immediately sends an in-app notification:
+"Your booking for 1 July at Bella Ladies Salon has been accepted. Please
+complete your payment within the next 10 minutes to confirm your
+appointment."
+When the user taps the notification:
+1. The Bookly application opens.
+2. 3. 4. 5. The booking details are displayed.
+The user taps Pay Now.
+The integrated Telr payment flow is launched.
+After successful payment, the booking is confirmed.
+Why is this approach recommended?
+A booking has its own lifecycle that continues independently of the chat. Once a
+booking request has been created, it moves through several stages until it is
+completed.
+For example, a booking may progress through the following stages:
+● Pending
+● Accepted
+● Rejected
+● Payment Pending
+● Confirmed
+● Cancelled
+● Expired
+These events are managed by the Bookly platform and should continue even if the
+user is no longer viewing the AI conversation.
+Separating the booking workflow from the chat ensures that users never miss
+important updates such as salon acceptance, payment requests, booking
+confirmations, or cancellations. It also creates a more reliable and production-ready
+booking experience.
+Reason 2: Payment Gateway SDK Integration
+Payment gateways such as Telr provide a Mobile SDK that is integrated into the
+Bookly mobile application, not into the AI chat interface.
+Note: The SDK is the component that displays the secure payment screen and
+processes the customer's payment within the application.
+Why can't the payment SDK run inside the chat?
+The AI chat is a conversational interface. It can:
+● Display messages.
+● Present booking details.
+● Show buttons.
+● Collect user responses.
+However, it cannot host or execute a payment gateway SDK.
+The Telr Mobile SDK requires access to native mobile capabilities such as:
+● Secure payment screens
+● Device security features
+● Native Android and iOS APIs
+● Application lifecycle callbacks
+● Secure communication with the Telr payment platform
+These capabilities are available only within the mobile application and cannot be
+executed inside a chat conversation.
+Reason 3: Security and Customer Trust
+One of the most important aspects of any booking platform is maintaining customer
+trust during the payment process.
+Customers are naturally more cautious when making online payments. A dedicated
+payment screen within the Bookly application provides confidence by clearly
+displaying:
+● Booking details
+● Salon information
+● Appointment date and time
+● Total payable amount
+before redirecting the user to the secure Telr payment gateway.
+Separating the payment process from the chat also reduces the possibility of:
+● Confusion regarding payment requests
+● Expired payment links
+● Suspicion about the authenticity of payment messages
+● Potential phishing concerns
+A structured payment flow within the application creates a more professional and
+trustworthy user experience.
+Reason 4: Maintaining a Seamless User Experience
+If the AI chatbot sends a payment link that opens an external browser, the user is
+temporarily taken outside the Bookly application.
+Although the payment itself remains secure, this interruption can negatively impact
+the overall booking experience and may reduce payment completion rates.
+A smoother approach is to initiate payment directly from within the Bookly application
+using the integrated Telr payment flow.
+This keeps the user within the application throughout the booking journey, resulting
+in:
+● A more consistent experience
+● Higher user confidence
+● Better payment completion rates
+● Reduced risk of users abandoning the payment process
+Why We Do Not Recommend Storing Complete AI Chat or User
+Conversations History?
+Reason 1: AI Context Window
+Modern AI models operate using a context window, which represents the amount of
+information the AI reads before generating each response.
+Before the AI answers any question, it looks at the information available to understand
+the user's request and provide a relevant response.
+This information may include:
+● Recent conversations
+● Previous bookings
+● Favourite salons
+● Preferred services
+● Saved user preferences
+The more unnecessary conversation history the AI has to read, the longer it takes to
+understand the request and generate a response.
+Example
+Imagine a user has had 500 conversations over the past year.
+Today the user simply asks:
+"Book me a facial tomorrow."
+The AI does not need to read:
+● Yesterday's conversation about birthday makeup
+● Last month's discussion about manicure prices
+● A six-month-old conversation about hair colouring
+● Hundreds of greetings and casual messages
+Instead, the AI only needs information that is useful for the current request, such as:
+● Preferred salon
+● Previous facial bookings
+● Preferred location
+● Preferred appointment time
+● Favourite services
+By using only relevant information, the AI can respond much faster and provide more
+accurate recommendations.
+Reason 2: Better AI Performance
+Each AI response is generated using the available conversation context.
+The larger the conversation history, the more information the AI must process before
+producing a response.
+This can result in:
+● Increased response time
+● Higher AI processing costs
+● Greater likelihood of irrelevant information influencing the response
+Example
+User: Book a facial.
+If the AI must first process hundreds of previous messages, the response will be
+slower and potentially less focused than if it simply uses the user's booking history
+and saved preferences.
+Using structured business data instead of a complete conversation history
+significantly improves both speed and accuracy.
+Reason 3: Increased Risk of Errors Due to Large AI Context
+AI models have a limit on the amount of information they can process in a single
+request. If every conversation is continuously stored and sent to the AI, the context
+gradually becomes larger over time.
+As the context grows, the likelihood of errors also increases. The AI may become
+confused by outdated or irrelevant conversations, resulting in inaccurate responses or
+recommendations. In cases where the total context exceeds the AI model's maximum
+processing limit, the AI may fail to generate a response altogether and return an error
+indicating that the request is too large to process.
+Reason 4: Lower Infrastructure Costs
+Every stored conversation requires ongoing resources, including:
+● Database storage
+● Secure data management
+● Retrieval during AI processing
+● Backup and maintenance
+With thousands of active users, AI conversations can quickly grow into millions of
+stored messages.
+A large proportion of these conversations provide little or no long-term value.
+For example, messages such as:
+● "Hello"
+● "Thank you"
+● "Good morning"
+● "Can you help me?"
+do not contribute to future recommendations or booking decisions.
+Recommended Approach
+Instead of storing every conversation indefinitely, Bookly should retain structured
+business information that genuinely improves the user experience.
+This includes:
+● Booking history
+● Completed services
+● Favourite salons
+● User ratings
+● Preferred appointment times
+● Preferred locations
+● Frequently booked services
+● Loyalty points
+● Saved preferences
+These records allow the AI to deliver highly personalised recommendations without
+processing unnecessary conversation history.
+Bookly should retain structured business information (such as bookings, ratings, and
+preferences) because this helps the AI deliver personalised recommendations and
+faster responses.

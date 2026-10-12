@@ -1,37 +1,30 @@
 from __future__ import annotations
 
+from app.agent.assistant import BookingAssistant
 from app.core.config import get_settings
 from app.core.logging import get_logger
-from app.rag.ingest import ingest_rag_documents
+from app.rag.ingest import DOCUMENTS_DIR
+from app.rag.vector_store import create_rag_store, load_docs_from_directory
 from app.services.category_service import CategoryService
-from app.services.orchestrator_service import OrchestratorService
 from app.services.user_service import UserService
 
 logger = get_logger(__name__)
 
 category_service = CategoryService()
 user_service = UserService()
-orchestrator_service: OrchestratorService | None = None
+assistant: BookingAssistant | None = None
 
 
 def initialize_dependencies() -> None:
-    global orchestrator_service
+    global assistant
 
     category_service.warmup()
-    categories = category_service.get_category_names()
-    logger.info("CATEGORIES_LOADED: %s categories from Categories API -> %s", len(categories), categories)
-    orchestrator_service = OrchestratorService(
-        categories=categories,
-        user_service=user_service,
-        category_service=category_service,
-    )
+    logger.info("CATEGORIES_LOADED: %s", category_service.get_category_names())
 
-    # Skip RAG ingestion for now - will load on-demand
-    # settings = get_settings()
-    # if settings.openai_api_key:
-    #     try:
-    #         ingest_rag_documents()
-    #         logger.info("RAG documents ingested")
-    #     except Exception as exc:
-    #         logger.warning("RAG ingestion skipped: %s", exc)
+    knowledge = create_rag_store() if get_settings().openai_api_key else None
+    if knowledge is not None and knowledge.count() == 0:
+        knowledge.upsert_documents(load_docs_from_directory(DOCUMENTS_DIR))
+        logger.info("RAG documents ingested into empty collection")
+
+    assistant = BookingAssistant(categories=category_service, users=user_service, knowledge=knowledge)
     logger.info("Dependencies initialized successfully")

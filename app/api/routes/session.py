@@ -14,20 +14,20 @@ def start_session(payload: SessionStartRequest) -> SessionStartResponse:
 
     This is additive and does not alter the existing chat or socket flows.
     """
-    if deps.orchestrator_service is None:
+    if deps.assistant is None:
         raise HTTPException(status_code=503, detail="Service not initialized")
 
     # When a userId is explicitly provided and the DB is reachable, a missing
     # user is a 404 (not a 500). If the DB is unreachable we degrade gracefully.
     if payload.user_id:
-        user_service = deps.orchestrator_service.user_service
+        user_service = deps.assistant.users
         if user_service.is_available():
             profile = user_service.get_user_profile(payload.user_id)
             if profile is None:
                 logger.info("SESSION_START: user not found user_id=%s -> 404", payload.user_id)
                 raise HTTPException(status_code=404, detail=f"User not found: {payload.user_id}")
 
-    context = deps.orchestrator_service.ensure_user_context(payload.session_id, payload.user_id)
+    context = deps.assistant.ensure_user_context(payload.session_id, payload.user_id)
     context = context or SessionContext(user_id=payload.user_id)
 
     if context.full_name:

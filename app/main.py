@@ -1,73 +1,62 @@
+import asyncio
+import logging
+import os
 import sys
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 # Ensure project root is on sys.path regardless of PM2 cwd or entrypoint.
-# Required when PM2 runs "python app/main.py" instead of "uvicorn app.main:app".
 _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-import logging
-import os
-from dotenv import load_dotenv
 
 load_dotenv()
-
-logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO"),
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+)
 logger = logging.getLogger("bookly")
 
-from app.api.router import api_router
 from app.api import deps
+from app.api.router import api_router
+from app.sockets.socketio_server import create_socket_app
 
-app = FastAPI(title="BOOKLY AI Appointment Agent")
 
-app.add_middleware(
+async def _init_dependencies() -> None:
+    try:
+        await asyncio.to_thread(deps.initialize_dependencies)
+    except Exception:
+        logger.exception("Dependency initialization failed")
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    # Initialise in the background so the server accepts connections immediately;
+    # endpoints return 503 until the assistant is ready.
+    task = asyncio.create_task(_init_dependencies())
+    yield
+    task.cancel()
+
+
+fastapi_app = FastAPI(title="BOOKLY AI Appointment Agent", lifespan=lifespan)
+fastapi_app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+fastapi_app.include_router(api_router)
 
-
-@app.on_event("startup")
-async def startup_event():
-    logger.info("Starting BOOKLY AI - dependencies will be initialized on first request")
-    # Initialize dependencies lazily in a background task to avoid blocking startup
-    import asyncio
-    from concurrent.futures import ThreadPoolExecutor
-    loop = asyncio.get_event_loop()
-    executor = ThreadPoolExecutor(max_workers=1)
-    
-    def init_deps():
-        try:
-            deps.initialize_dependencies()
-            logger.info("Dependencies initialized successfully")
-        except Exception as e:
-            logger.exception("Dependency initialization failed: %s", e)
-    
-    # Run initialization in thread pool to not block async event loop
-    loop.run_in_executor(executor, init_deps)
-
-
-app.include_router(api_router)
-
-# Mount Socket.IO ASGI wrapper so Socket.IO and REST share the same server
-try:
-    from app.sockets.socketio_server import create_socket_app
-
-    # Wrap the FastAPI app with the Socket.IO ASGI app
-    asgi_app = create_socket_app(app)
-    # Rebind the name `app` so Uvicorn serves the combined ASGI app
-    app = asgi_app
-except Exception:
-    logger.exception("Failed to initialize Socket.IO app; continuing with REST only")
+# Socket.IO and REST share one ASGI app; uvicorn serves `app.main:app`.
+app = create_socket_app(fastapi_app)
 
 
 if __name__ == "__main__":
     import uvicorn
 
-    port = int(os.getenv("PORT", os.getenv("APP_PORT", "5000")))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", os.getenv("APP_PORT", "5000"))))

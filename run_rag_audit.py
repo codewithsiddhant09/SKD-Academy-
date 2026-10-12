@@ -104,20 +104,7 @@ for q_idx, question in enumerate(questions, 1):
             for i, (chunk, score) in enumerate(retrieved, 1):
                 content = chunk.page_content[:100].replace('\n', ' ')
                 print(f"   Chunk {i} (score {score:.4f}): {content}...")
-            
-            # Test with LLM
-            print("\nTesting with LLM...")
-            from app.agents.faq_agent import FaqAgent
-            agent = FaqAgent()
-            debug_response = agent.debug_answer(question)
-            
-            print(f"\nSimilarity Scores: {debug_response.similarity_scores}")
-            print(f"\nFinal Context (chars): {sum(len(c) for c in debug_response.context)}")
-            print(f"\nFinal Answer Preview:")
-            answer_preview = debug_response.answer[:150]
-            print(f"   {answer_preview}...")
-            print(f"\nExplanation: {debug_response.explanation}")
-            
+
     except Exception as e:
         print(f"   ✗ Error: {e}")
         import traceback

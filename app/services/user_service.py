@@ -4,6 +4,7 @@ from typing import Any
 
 from app.core.config import get_settings
 from app.core.logging import get_logger
+from app.repositories.mongo import get_database
 from app.models.schemas import SessionContext, UserProfile
 
 logger = get_logger(__name__)
@@ -19,37 +20,10 @@ class UserService:
 
     def __init__(self) -> None:
         self._settings = get_settings()
-        self._collection: Any | None = None
-        self._init_attempted = False
 
     def _ensure_collection(self) -> Any | None:
-        if self._collection is not None:
-            return self._collection
-        if self._init_attempted:
-            return None
-
-        self._init_attempted = True
-        uri = self._settings.mongodb_uri
-        if not uri:
-            logger.info("USER_SOURCE: MongoDB URI not configured; user enrichment disabled")
-            return None
-
-        try:
-            from pymongo import MongoClient
-
-            client = MongoClient(uri, serverSelectionTimeoutMS=2000)
-            db = client[self._settings.mongodb_db_name]
-            self._collection = db[self._settings.mongodb_users_collection]
-            logger.info(
-                "USER_SOURCE: Connected to MongoDB db=%s collection=%s",
-                self._settings.mongodb_db_name,
-                self._settings.mongodb_users_collection,
-            )
-            return self._collection
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.warning("USER_SOURCE: MongoDB unavailable, falling back to generic context: %s", exc)
-            self._collection = None
-            return None
+        db = get_database()
+        return db[self._settings.mongodb_users_collection] if db is not None else None
 
     def is_available(self) -> bool:
         """True when the users collection is reachable (for 404 vs 503 decisions)."""

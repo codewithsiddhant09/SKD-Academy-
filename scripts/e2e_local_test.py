@@ -68,17 +68,6 @@ def main() -> int:
         ok = bool(reply) and len(reply) > 15 and "unavailable" not in reply.lower()
         record(f"RAG: {q}", ok, f"intent={rr['intent']} reply={reply[:90]!r}")
 
-    # ---- Phase 8: Intent detection (debug endpoint) ------------------
-    intent_cases = [
-        ("Show vendors in Noida", "salon_search"),
-        ("Hair Smoothing", "service_search"),
-        ("What is Bookly?", "faq"),
-    ]
-    for q, expected in intent_cases:
-        di = get(f"/debug/intent?q={httpx.QueryParams({'q': q})['q']}")
-        got = str(di.get("intent", "")).split(".")[-1].lower()
-        record(f"Intent '{q}'", got == expected, f"got={got} expected={expected} location={di.get('location')}")
-
     # ---- Phase 8: Category detection (debug endpoint) ----------------
     cats = get("/debug/categories")
     record("Categories from API", cats.get("count", 0) > 0,

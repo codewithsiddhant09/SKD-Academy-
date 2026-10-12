@@ -6,6 +6,8 @@ class Settings(BaseSettings):
     app_name: str = "Bookly AI Appointment Chatbot"
     app_env: str = "development"
     app_port: int = 8000
+    # Timezone used to resolve "today"/"tomorrow" and reject past appointments.
+    app_timezone: str = "Asia/Dubai"
 
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"

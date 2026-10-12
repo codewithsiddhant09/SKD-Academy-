@@ -3,8 +3,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-import socketio
-from socketio import AsyncServer, ASGIApp
+from socketio import ASGIApp, AsyncServer
 
 from app.api import deps
 from app.core.logging import get_logger
@@ -45,7 +44,7 @@ async def user_message(sid: str, data: dict[str, Any]) -> None:
     Expects data: { session_id: str, message: str }
     Emits: typing_start, bot_response, salon_cards (optional), typing_end
     """
-    session_id = data.get("session_id", "anonymous")
+    session_id = data.get("session_id") or sid
     message = data.get("message", "")
     user_id = data.get("user_id") or data.get("userId")
 
@@ -54,8 +53,8 @@ async def user_message(sid: str, data: dict[str, Any]) -> None:
     # Notify client we are typing
     await sio.emit("typing_start", {"session_id": session_id}, to=sid)
 
-    orchestrator = deps.orchestrator_service
-    if orchestrator is None:
+    assistant = deps.assistant
+    if assistant is None:
         await sio.emit(
             "bot_response",
             {
@@ -70,64 +69,45 @@ async def user_message(sid: str, data: dict[str, Any]) -> None:
         await sio.emit("typing_end", {"session_id": session_id}, to=sid)
         return
 
-    # Load user context (no-op when user_id is absent) before running the workflow
-    if user_id:
-        orchestrator.ensure_user_context(session_id, user_id)
-
-    # Record user message
-    orchestrator.memory.add_message(session_id, "user", message)
-
-    # Run orchestrator workflow
-    state = {"session_id": session_id, "user_message": message}
-    result = orchestrator.workflow.run(state)
-
-    reply = result.get(
-        "reply",
-        (
-            "I am here to assist you. Please let me know which service "
-            "you are looking for or how I can help."
-        ),
-    )
-
-    # Save assistant reply into memory
-    orchestrator.memory.add_message(session_id, "assistant", reply)
-
-    # Emit the bot response
-    intent = None
-    if result.get("intent_analysis"):
-        intent = getattr(result.get("intent_analysis"), "intent", None)
+    # Same code path as POST /chat; run in a thread so a slow LLM call does not
+    # block every other socket connection on the event loop.
+    try:
+        response = await asyncio.to_thread(assistant.chat, session_id, message, user_id)
+    except Exception:
+        logger.exception("socket chat failed: session=%s", session_id)
+        await sio.emit(
+            "bot_response",
+            {"session_id": session_id, "reply": "I apologize, something went wrong. Please try again."},
+            to=sid,
+        )
+        await sio.emit("typing_end", {"session_id": session_id}, to=sid)
+        return
 
     await sio.emit(
         "bot_response",
         {
             "session_id": session_id,
-            "reply": reply,
-            "intent": str(intent) if intent else None,
-            "structured": result.get("structured") if result.get("structured") else {},
+            "reply": response.reply,
+            "intent": response.intent.value,
+            "structured": response.structured,
         },
         to=sid,
     )
 
-    # If there are salon recommendations, emit salon_cards
-    recommendations = result.get("recommendations") or []
-    if recommendations:
-        salons = []
-        for r in recommendations:
-            vendor_id = getattr(r, "vendor_id", None) or ""
-            salons.append(
-                {
-                    "salonId": vendor_id,
-                    "salonName": getattr(r, "salon_name", None),
-                    "rating": getattr(r, "rating", None),
-                    "distance": getattr(r, "distance", None),
-                    "location": getattr(r, "location", None),
-                    "services": getattr(r, "services", None) or [],
-                    "image": getattr(r, "image", None),
-                    "reason": getattr(r, "reason", None),
-                    "redirectUrl": getattr(r, "redirect_url", None) or (f"/salon/{vendor_id}" if vendor_id else None),
-                }
-            )
-
+    if response.recommendations:
+        salons = [
+            {
+                "salonId": r.vendor_id,
+                "salonName": r.salon_name,
+                "rating": r.rating,
+                "location": r.location,
+                "services": r.services,
+                "image": r.image,
+                "reason": r.reason,
+                "redirectUrl": r.redirect_url,
+            }
+            for r in response.recommendations
+        ]
         await sio.emit("salon_cards", {"salons": salons}, to=sid)
 
     # End typing
