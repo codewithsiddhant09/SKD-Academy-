@@ -15,6 +15,11 @@ class Settings(BaseSettings):
 
     categories_api_url: str = "http://localhost:4006/user/allCategories"
     salon_info_api_url: str = "https://admin.bookly.ae:2053/user/viewVendor"
+    booking_create_api_url: str = "http://15.252.235.83:2053/booking/createBooking"
+    booking_view_api_url: str = "http://15.252.235.83:2053/booking/viewBooking"
+    booking_api_timeout_seconds: int = 15
+    booking_api_verify_ssl: bool = True
+    booking_vat_percentage: float = 5.0
 
     # MongoDB source (optional; gracefully skipped when unset)
     mongodb_uri: str = ""

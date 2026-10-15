@@ -24,6 +24,8 @@ class Session:
     draft: BookingPayload = field(default_factory=BookingPayload)
     # Last location the customer searched in; stored on the booking request.
     location: str | None = None
+    booking_contact: dict | None = None
+    last_booking_order_id: str | None = None
     # True once a complete draft was summarised to the customer in an earlier turn.
     awaiting_confirmation: bool = False
     # Counts customer messages; used to require that a request was shown before it is cancelled.

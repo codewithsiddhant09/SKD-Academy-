@@ -8,7 +8,7 @@ from app.api.routes.health import router as health_router
 from app.api.routes.session import router as session_router
 from app.api.routes.upload import router as upload_router
 
-api_router = APIRouter()
+api_router = APIRouter(prefix="/api/v1")
 api_router.include_router(health_router, tags=["health"])
 api_router.include_router(categories_router, tags=["categories"])
 api_router.include_router(session_router, tags=["session"])

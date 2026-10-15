@@ -542,44 +542,89 @@ def run_confirm_booking(ctx: ToolContext, args: confirm_booking) -> dict:
     offer = next((o for o in salon.offers if o.name.lower() == d.service.lower()), None)
     if session.editing_request:
         return _save_modification(ctx, offer)
-    request_id = ctx.bookings.submit_request(
-        {
-            "userId": user.user_id if user and user.user_id else session.session_id,
-            "vendorId": salon.vendor_id,
-            "vendorName": salon.salon_name,
-            "services": [offer.id] if offer else [],
-            "serviceName": d.service,
-            "categoryName": offer.category if offer else None,
-            "location": session.location,
-            "bookingType": "Individual",
-            "groupSize": 1,
-            "companions": [],
-            "date": f"{d.date} 00:00:00",
-            "slot": time.fromisoformat(d.time).strftime("%I:%M %p"),
-            "requestedDate": d.date,
-            "requestedTime": d.time,
-            "customer_name": (user.full_name if user else None) or "User",
-            "customer_phone": (user.phone_number if user else None) or "",
-        }
-    )
+    if not user or not user.user_id:
+        return {"error": "Booking requires a signed-in Bookly account. Sign in and try again."}
+    contact = session.booking_contact or {}
+    def value(key: str, profile_value: Any = None) -> Any:
+        candidate = contact.get(key)
+        return candidate if candidate is not None and candidate != "" else profile_value
+
+    contact_name = value("contact_name", user.full_name)
+    email = value("email", user.email)
+    country_code = value("country_code", user.country_code)
+    phone = value("phone_number", user.phone_number)
+    address = value("address", user.address)
+    city = value("city", user.city)
+    zip_code = value("zip_code", user.zip_code)
+    latitude = value("latitude", user.latitude)
+    longitude = value("longitude", user.longitude)
+    required = {
+        "contact name": contact_name,
+        "email": email,
+        "country code": country_code,
+        "phone number": phone,
+        "address": address,
+        "city": city,
+        "zip code": zip_code,
+        "latitude": latitude,
+        "longitude": longitude,
+    }
+    missing_contact = [label for label, item in required.items() if item is None or item == ""]
+    if missing_contact:
+        return {"error": "Before submitting, please provide: " + ", ".join(missing_contact) + ". Save these using PATCH /session/{session_id}/booking-contact, then explicitly confirm the booking again."}
+    if not offer or not offer.id or offer.id.startswith("mock-"):
+        return {"error": "The selected service has no real Bookly service ID, so the booking cannot be submitted."}
+    booking_payload = {
+        "vendorId": salon.vendor_id,
+        "serviceId": [offer.id],
+        "bookingType": "Individual",
+        "date": d.date,
+        "slot": time.fromisoformat(d.time).strftime("%I:%M %p"),
+        "BookingAppointment": contact.get("booking_appointment", "Home"),
+        "contactName": contact_name,
+        "email": email,
+        "couponId": contact.get("coupon_id"),
+        "discountAmount": contact.get("discount_amount"),
+        "finalAmount": contact.get("final_amount"),
+        "vatPercentage": ctx.bookings.vat_percentage(),
+        "vat": contact.get("vat"),
+        "countryCode": country_code,
+        "phoneNumber": phone,
+        "address": address,
+        "city": city,
+        "bookingcreatedBy": user.user_id,
+        "zipCode": zip_code,
+        "location": {"type": "Point", "coordinates": [float(longitude), float(latitude)]},
+        "additionalNote": contact.get("additional_note"),
+    }
+    try:
+        result = ctx.bookings.create_external_booking(booking_payload)
+    except RuntimeError as exc:
+        logger.warning("BOOKING_API_FAILED: %s", exc)
+        return {"error": str(exc), "retry_safe": False}
+    booking = result["results"]["booking"]
+    request_id = booking["orderId"]
     ctx.booking_result = {
-        "request_id": request_id,
-        "status": "pending",
+        "order_id": request_id,
+        "status": booking.get("bookingStatus", "Pending"),
+        "payment_status": booking.get("paymentStatus", "Pending"),
         "salon": salon.salon_name,
         "service": d.service,
         "date": d.date,
         "time": d.time,
-        "user_id": user.user_id if user else None,
+        "user_id": user.user_id,
     }
+    session.last_booking_order_id = request_id
     session.draft = BookingPayload()
     session.awaiting_confirmation = False
     return {
         "submitted": True,
-        "request_id": request_id,
-        "tell_customer": f"Give the customer their request ID: {request_id}.",
-        "status": "pending",
-        "next_steps": "The salon will accept or reject the request. The customer is notified in the Bookly app and pays there.",
+        "order_id": request_id,
+        "booking_status": booking.get("bookingStatus", "Pending"),
+        "payment_status": booking.get("paymentStatus", "Pending"),
+        "tell_customer": f"Your booking was created with order ID {request_id}. Its current status is {booking.get('bookingStatus', 'Pending')}; payment status is {booking.get('paymentStatus', 'Pending')}.",
     }
+
 
 
 def _request_view(req: dict) -> dict[str, Any]:

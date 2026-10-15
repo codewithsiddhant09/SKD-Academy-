@@ -2,10 +2,21 @@ from fastapi import APIRouter, HTTPException
 
 from app.api import deps
 from app.core.logging import get_logger
-from app.models.schemas import SessionContext, SessionStartRequest, SessionStartResponse
+from app.models.schemas import BookingContactUpdate, SessionContext, SessionStartRequest, SessionStartResponse
 
 logger = get_logger(__name__)
 router = APIRouter()
+
+
+@router.patch("/session/{session_id}/booking-contact")
+def update_booking_contact(session_id: str, payload: BookingContactUpdate) -> dict:
+    if deps.assistant is None:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+    session = deps.assistant.sessions.get(session_id)
+    if not session.user or not session.user.user_id:
+        raise HTTPException(status_code=401, detail="Sign in before saving booking contact details")
+    session.booking_contact = payload.model_dump()
+    return {"updated": True}
 
 
 @router.post("/session/start", response_model=SessionStartResponse)

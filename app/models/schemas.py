@@ -13,13 +13,7 @@ class Category(BaseModel):
 
 
 class UserProfile(BaseModel):
-    """User document loaded from MongoDB (field names mapped from the DB schema).
-
-    Types are intentionally permissive because the live `users` collection
-    stores some fields with varying shapes (e.g. `status` as a bool,
-    `businessLocation` as an object, `serviceType` as a list). Values are
-    normalized in `UserService._to_profile` before construction.
-    """
+    """User document loaded from MongoDB (field names mapped from the DB schema)."""
 
     user_id: str
     full_name: str | None = None
@@ -36,6 +30,11 @@ class UserProfile(BaseModel):
     dob: str | None = None
     gender: str | None = None
     nationality: str | None = None
+    address: str | None = None
+    city: str | None = None
+    zip_code: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
 
 
 class SessionContext(BaseModel):
@@ -45,10 +44,15 @@ class SessionContext(BaseModel):
     full_name: str | None = None
     email: str | None = None
     phone_number: str | None = None
+    country_code: str | None = None
     gender: str | None = None
     nationality: str | None = None
     business_location: str | None = None
-
+    address: str | None = None
+    city: str | None = None
+    zip_code: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
 
 
 class ChatRequest(BaseModel):
@@ -62,12 +66,29 @@ class SessionStartRequest(BaseModel):
     user_id: str | None = None
 
 
+class BookingContactUpdate(BaseModel):
+    address: str = Field(..., min_length=3)
+    city: str = Field(..., min_length=2)
+    zip_code: str = Field(..., min_length=2)
+    latitude: float = Field(..., ge=-90, le=90)
+    longitude: float = Field(..., ge=-180, le=180)
+    country_code: str = Field(..., min_length=1)
+    contact_name: str | None = None
+    email: str | None = None
+    phone_number: str | None = None
+    booking_appointment: str = "Home"
+    additional_note: str | None = None
+    booking_appointment: str = "Home"
+    coupon_id: str | None = None
+    discount_amount: float | None = None
+    final_amount: float | None = None
+    vat: float | None = None
+
+
 class SessionStartResponse(BaseModel):
     session_id: str
     greeting: str
     context: SessionContext
-
-
 
 
 class ServiceOffer(BaseModel):
@@ -132,8 +153,6 @@ class ChatResponse(BaseModel):
     recommendations: list[SalonRecommendation] = Field(default_factory=list)
 
 
-
-
 class DebugRagRequest(BaseModel):
     question: str = Field(..., min_length=1)
 
@@ -143,7 +162,6 @@ class DebugRagResponse(BaseModel):
     retrieved_chunks: list[str]
     similarity_scores: list[float]
     sources: list[str | None]
-
 
 
 class HealthResponse(BaseModel):

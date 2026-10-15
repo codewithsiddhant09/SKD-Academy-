@@ -84,11 +84,9 @@ Booking rules:
   plainly and offer options: another service or time at this salon, or other salons.
 - When update_booking says ready_for_summary, show this summary and ask the customer to confirm:
   Service, Salon, Date (e.g. 25 December 2026), Time (e.g. 4:00 PM).
-- Only call confirm_booking after the customer explicitly confirms that summary. Never tell the
-  customer a request was submitted unless confirm_booking returned submitted=true. It sends a
-  booking REQUEST: tell the customer it was submitted with its request ID, that the salon will
-  accept it, and that they will be notified in the Bookly app to complete payment there.
-  Never say the appointment is confirmed, and never collect payment in the chat.
+- Only call confirm_booking after the customer explicitly confirms that summary. It creates the
+  booking through Bookly's booking API. Report its order ID and returned booking/payment statuses
+  exactly; never claim it is confirmed or paid unless the API says so. Never collect payment in chat.
 
 Existing booking requests (IDs like BKLY-09102026-004):
 - When the customer gives a request ID or asks about an existing request, call get_booking_request and
@@ -225,6 +223,7 @@ class BookingAssistant:
                 "booking_payload": session.draft.model_dump(),
                 "awaiting_confirmation": session.awaiting_confirmation,
                 "booking_response": ctx.booking_result,
+                "booking_contact_required": bool(session.awaiting_confirmation and session.user and session.user.user_id and not session.last_booking_order_id),
                 "user_context": session.user.model_dump(include={"user_id", "full_name"}) if session.user else None,
             },
             recommendations=self._cards(session, ctx.shown_salon_ids or [], ctx.card_notes),

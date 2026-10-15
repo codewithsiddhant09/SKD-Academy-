@@ -73,6 +73,24 @@ class UserService:
         # dict / list / ObjectId / datetime -> not a usable scalar string
         return None
 
+    @staticmethod
+    def _as_float(value: Any) -> float | None:
+        if value is None or isinstance(value, bool):
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    @classmethod
+    def _location_coordinate(cls, doc: dict[str, Any], index: int) -> float | None:
+        location = doc.get("location")
+        coordinates = location.get("coordinates") if isinstance(location, dict) else None
+        if isinstance(coordinates, (list, tuple)) and len(coordinates) > index:
+            return cls._as_float(coordinates[index])
+        key = "latitude" if index == 1 else "longitude"
+        return cls._as_float(doc.get(key))
+
     def _to_profile(self, user_id: str, doc: dict[str, Any]) -> UserProfile:
         status = doc.get("status")
         if not isinstance(status, (bool, str)):
@@ -93,7 +111,27 @@ class UserService:
             dob=self._as_str(doc.get("dob")),
             gender=self._as_str(doc.get("gender")),
             nationality=self._as_str(doc.get("nationality")),
+            address=self._as_str(doc.get("address") or doc.get("streetAddress")),
+            city=self._as_str(doc.get("city")),
+            zip_code=self._as_str(doc.get("zipCode") or doc.get("zip_code")),
+            latitude=self._location_coordinate(doc, 1),
+            longitude=self._location_coordinate(doc, 0),
         )
+
+    def _load_booking_address(self, user_id: str) -> dict[str, Any]:
+        """Read the signed-in customer's address document when contact data isn't on users."""
+        db = get_database()
+        if db is None:
+            return {}
+        from bson import ObjectId
+
+        oid = ObjectId(user_id) if ObjectId.is_valid(user_id) else user_id
+        try:
+            doc = db[self._settings.mongodb_addresses_collection].find_one({"userId": oid})
+            return doc or {}
+        except Exception:
+            logger.exception("USER_ADDRESS_LOOKUP_FAILED: user_id=%s", user_id)
+            return {}
 
     def get_user_profile(self, user_id: str) -> UserProfile | None:
         if not user_id:
@@ -117,7 +155,8 @@ class UserService:
         # Build the profile defensively: a schema/type mismatch must NEVER
         # surface as an HTTP 500 — degrade to a generic (None) profile instead.
         try:
-            profile = self._to_profile(user_id, doc)
+            address_doc = self._load_booking_address(user_id)
+            profile = self._to_profile(user_id, {**address_doc, **doc})
         except Exception:  # pragma: no cover - defensive
             logger.exception(
                 "USER_PROFILE_BUILD_FAILED: user_id=%s doc_keys=%s",
@@ -147,4 +186,10 @@ class UserService:
             gender=profile.gender,
             nationality=profile.nationality,
             business_location=profile.business_location,
+            country_code=profile.country_code,
+            address=profile.address,
+            city=profile.city,
+            zip_code=profile.zip_code,
+            latitude=profile.latitude,
+            longitude=profile.longitude,
         )

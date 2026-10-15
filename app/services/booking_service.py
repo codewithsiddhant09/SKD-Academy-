@@ -4,6 +4,9 @@ from datetime import date, datetime
 from typing import Any
 from uuid import uuid4
 
+import httpx
+
+from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.models.schemas import BookingPayload, BookingResponse
 from app.repositories.booking_repository import BookingRepository
@@ -64,12 +67,72 @@ class BookingService:
         doc.update(fields)
         return True
 
+    def vat_percentage(self) -> float:
+        return float(get_settings().booking_vat_percentage)
+
+    def create_external_booking(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Create a Bookly booking once; never retry ambiguous POST failures."""
+        settings = get_settings()
+        try:
+            with httpx.Client(timeout=settings.booking_api_timeout_seconds, verify=settings.booking_api_verify_ssl) as client:
+                response = client.post(settings.booking_create_api_url, json=payload)
+                response.raise_for_status()
+                result = response.json()
+        except httpx.TimeoutException as exc:
+            raise RuntimeError("Booking request timed out; verify booking status before retrying.") from exc
+        except httpx.RequestError as exc:
+            raise RuntimeError(f"Booking API request failed: {exc}") from exc
+        except httpx.HTTPStatusError as exc:
+            detail = exc.response.text[:500]
+            raise RuntimeError(f"Booking API returned HTTP {exc.response.status_code}: {detail}") from exc
+        except ValueError as exc:
+            raise RuntimeError("Booking API returned invalid JSON.") from exc
+
+        if not isinstance(result, dict) or result.get("error") is True:
+            raise RuntimeError(str(result.get("message", "Booking API rejected the booking.")) if isinstance(result, dict) else "Booking API returned an invalid response.")
+        booking = (result.get("results") or {}).get("booking") if isinstance(result.get("results"), dict) else None
+        if not isinstance(booking, dict) or not booking.get("orderId"):
+            raise RuntimeError("Booking API response did not contain a booking order ID.")
+        return result
+
+    def view_external_booking(self, booking_id: str, auth_headers: dict[str, str]) -> dict[str, Any]:
+        """Fetch one Bookly booking using the caller's Bookly auth headers."""
+        settings = get_settings()
+        url = f"{settings.booking_view_api_url.rstrip('/')}/{booking_id}"
+        headers = {
+            "x-auth-language": auth_headers["x-auth-language"],
+            "x-user-type": auth_headers["x-user-type"],
+            "x-auth-token-user": auth_headers["x-auth-token-user"],
+        }
+        try:
+            with httpx.Client(timeout=settings.booking_api_timeout_seconds, verify=settings.booking_api_verify_ssl) as client:
+                response = client.get(url, headers=headers)
+                response.raise_for_status()
+                result = response.json()
+        except httpx.TimeoutException as exc:
+            raise RuntimeError("Booking lookup timed out; please try again later.") from exc
+        except httpx.HTTPStatusError as exc:
+            detail = exc.response.text[:500]
+            raise RuntimeError(f"Booking API returned HTTP {exc.response.status_code}: {detail}") from exc
+        except httpx.RequestError as exc:
+            raise RuntimeError(f"Booking API request failed: {exc}") from exc
+        except ValueError as exc:
+            raise RuntimeError("Booking API returned invalid JSON.") from exc
+
+        if not isinstance(result, dict) or result.get("error") is True:
+            message = result.get("message", "Booking lookup failed.") if isinstance(result, dict) else "Booking API returned an invalid response."
+            raise RuntimeError(str(message))
+        booking = (result.get("results") or {}).get("booking") if isinstance(result.get("results"), dict) else None
+        if not isinstance(booking, dict) or not booking.get("_id"):
+            raise RuntimeError("Booking API response did not contain booking details.")
+        return booking
+
     def create_booking(self, payload: BookingPayload) -> BookingResponse:
-        """Legacy POST /book-appointment (kept in memory; not sent to salons)."""
+        """Legacy local booking response for the non-conversational endpoint."""
         missing = [field for field in self.REQUIRED_FIELDS if not getattr(payload, field)]
         if missing:
             raise ValueError(f"Missing required booking fields: {', '.join(missing)}")
         booking_id = f"BKL-{datetime.now():%Y%m%d}-{uuid4().hex[:8].upper()}"
-        response = BookingResponse(booking_id=booking_id, status="confirmed", payload=payload)
+        response = BookingResponse(booking_id=booking_id, status="pending", payload=payload)
         self._memory[booking_id] = response
         return response
