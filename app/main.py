@@ -43,13 +43,15 @@ async def lifespan(_: FastAPI):
 
 
 fastapi_app = FastAPI(title="BOOKLY AI Appointment Agent", lifespan=lifespan)
+cors_origins = [origin.strip() for origin in os.getenv("CORS_ORIGINS", "*").split(",") if origin.strip()]
 fastapi_app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=cors_origins,
+    allow_credentials="*" not in cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 fastapi_app.include_router(api_router)
 
 # Socket.IO and REST share one ASGI app; uvicorn serves `app.main:app`.

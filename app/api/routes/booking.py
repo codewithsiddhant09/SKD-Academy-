@@ -1,9 +1,9 @@
 import re
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Request
 
 from app.api import deps
-from app.models.schemas import BookAppointmentRequest, BookingPayload, BookingResponse
+
 
 router = APIRouter()
 _BOOKING_ID_RE = re.compile(r"^[A-Fa-f0-9]{24}$")
@@ -39,10 +39,12 @@ def view_booking(
                 "x-auth-token-user": x_auth_token_user,
             },
         )
-    except RuntimeError as exc:
+        except RuntimeError as exc:
         message = str(exc)
-        status_code = 404 if "HTTP 404" in message else 401 if "HTTP 401" in message else 403 if "HTTP 403" in message else 502
+        status_code = next((code for code in (400, 401, 403, 404, 422) if f"HTTP {code}" in message), 502)
         raise HTTPException(status_code=status_code, detail=message) from exc
+
+
 
     return {"booking": _public_booking(booking)}
 
@@ -75,14 +77,37 @@ def _public_booking(booking: dict) -> dict:
     }
 
 
-@router.post("/book-appointment", response_model=BookingResponse)
-def book_appointment(payload: BookAppointmentRequest) -> BookingResponse:
+@router.post("/book-appointment")
+async def book_appointment(
+    request: Request,
+    x_auth_language: str | None = Header(default=None, alias="x-auth-language"),
+    x_user_type: str | None = Header(default=None, alias="x-user-type"),
+    x_auth_token_user: str | None = Header(default=None, alias="x-auth-token-user"),
+) -> dict:
     if deps.assistant is None:
         raise HTTPException(status_code=503, detail="Service not initialized")
+    try:
+        payload = await request.json()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Request body must be valid JSON") from exc
+    if not isinstance(payload, dict) or not payload:
+        raise HTTPException(status_code=422, detail="Request body must be a non-empty Bookly booking object")
 
-    booking_payload = BookingPayload.model_validate(payload.model_dump(exclude={"session_id"}))
-    missing = [f for f in ("customer_name", "phone", "salon", "service", "date", "time") if not getattr(booking_payload, f)]
-    if missing:
-        raise HTTPException(status_code=400, detail=f"Missing required fields: {', '.join(missing)}")
+    auth_headers = {
+        key: value for key, value in (
+            ("x-auth-language", x_auth_language),
+            ("x-user-type", x_user_type),
+            ("x-auth-token-user", x_auth_token_user),
+        ) if value
+    }
+    try:
+        result = deps.assistant.bookings.create_external_booking(payload, auth_headers)
+        except RuntimeError as exc:
+        message = str(exc)
+        status_code = next((code for code in (400, 401, 403, 404, 422) if f"HTTP {code}" in message), 502)
+        raise HTTPException(status_code=status_code, detail=message) from exc
 
-    return deps.assistant.bookings.create_booking(booking_payload)
+
+    booking = result["results"]["booking"]
+    return {"booking": {"_id": booking.get("_id"), "orderId": booking.get("orderId")}}
+

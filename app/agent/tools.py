@@ -601,11 +601,15 @@ def run_confirm_booking(ctx: ToolContext, args: confirm_booking) -> dict:
         result = ctx.bookings.create_external_booking(booking_payload)
     except RuntimeError as exc:
         logger.warning("BOOKING_API_FAILED: %s", exc)
-        return {"error": str(exc), "retry_safe": False}
+                return {"error": str(exc), "retry_safe": False}
     booking = result["results"]["booking"]
+
     request_id = booking["orderId"]
+    booking_id = booking["_id"]
     ctx.booking_result = {
+        "booking_id": booking_id,
         "order_id": request_id,
+
         "status": booking.get("bookingStatus", "Pending"),
         "payment_status": booking.get("paymentStatus", "Pending"),
         "salon": salon.salon_name,
@@ -617,9 +621,12 @@ def run_confirm_booking(ctx: ToolContext, args: confirm_booking) -> dict:
     session.last_booking_order_id = request_id
     session.draft = BookingPayload()
     session.awaiting_confirmation = False
-    return {
+        return {
         "submitted": True,
+        "booking_id": booking_id,
         "order_id": request_id,
+
+
         "booking_status": booking.get("bookingStatus", "Pending"),
         "payment_status": booking.get("paymentStatus", "Pending"),
         "tell_customer": f"Your booking was created with order ID {request_id}. Its current status is {booking.get('bookingStatus', 'Pending')}; payment status is {booking.get('paymentStatus', 'Pending')}.",

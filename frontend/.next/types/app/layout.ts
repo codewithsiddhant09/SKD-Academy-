@@ -1,4 +1,4 @@
-// File: /Users/mac/bookly/a-agent-base/frontend/app/layout.tsx
+// File: C:\Users\Admin 1\Downloads\appointmentBOOKLY_updated (1)\frontend\app\layout.tsx
 import * as entry from '../../../app/layout.js'
 import type { ResolvingMetadata, ResolvingViewport } from 'next/dist/lib/metadata/types/metadata-interface.js'
 

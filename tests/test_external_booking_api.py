@@ -58,7 +58,7 @@ def mock_success(monkeypatch, result):
 
 
 def test_booking_api_payload_and_success(monkeypatch):
-    client = mock_success(monkeypatch, {"error": False, "results": {"booking": {"orderId": "BKLY-123", "bookingStatus": "Pending", "paymentStatus": "Pending"}}})
+    client = mock_success(monkeypatch, {"error": False, "results": {"booking": {"_id": "6acf08e821c04f990fe0832d", "orderId": "BKLY-123", "bookingStatus": "Pending", "paymentStatus": "Pending"}}})
     ctx = ready_context()
 
     result = run_confirm_booking(ctx, confirm_booking())
@@ -71,6 +71,7 @@ def test_booking_api_payload_and_success(monkeypatch):
     assert sent["bookingcreatedBy"] == "6a95256c6e2ce14bdd67a45a"
     assert sent["location"] == {"type": "Point", "coordinates": [77.3887, 28.6167]}
     assert result["order_id"] == "BKLY-123"
+    assert result["booking_id"] == "6acf08e821c04f990fe0832d"
     assert result["booking_status"] == "Pending"
     assert ctx.session.last_booking_order_id == "BKLY-123"
 
@@ -118,12 +119,47 @@ def test_timeout_is_not_safe_to_retry(monkeypatch):
 
 
 def test_confirmation_required_before_api_call(monkeypatch):
-    client = mock_success(monkeypatch, {"error": False, "results": {"booking": {"orderId": "BKLY-123"}}})
+    client = mock_success(monkeypatch, {"error": False, "results": {"booking": {"_id": "6acf08e821c04f990fe0832d", "orderId": "BKLY-123"}}})
     ctx = ready_context()
     ctx.session.awaiting_confirmation = False
     result = run_confirm_booking(ctx, confirm_booking())
     assert "explicit confirmation" in result["error"]
     client.post.assert_not_called()
+
+
+def test_create_booking_route_forwards_payload_and_auth_headers(monkeypatch):
+    from app.api import deps
+    from app.main import fastapi_app
+
+    assistant = Mock()
+    assistant.bookings.create_external_booking.return_value = {
+        "error": False,
+        "results": {"booking": {"_id": "6acf08e821c04f990fe0832d", "orderId": "BKLY-123"}},
+    }
+    monkeypatch.setattr(deps, "assistant", assistant)
+    payload = {"vendorId": "vendor-1", "serviceId": ["service-1"]}
+    headers = {
+        "x-auth-language": "English", "x-user-type": "User", "x-auth-token-user": "test-token",
+    }
+
+    response = TestClient(fastapi_app).post("/api/v1/book-appointment", json=payload, headers=headers)
+
+    assert response.status_code == 200
+    assert response.json() == {"booking": {"_id": "6acf08e821c04f990fe0832d", "orderId": "BKLY-123"}}
+    assistant.bookings.create_external_booking.assert_called_once_with(payload, headers)
+
+
+def test_create_external_booking_passes_auth_headers(monkeypatch):
+    client = mock_success(monkeypatch, {
+        "error": False,
+        "results": {"booking": {"_id": "6acf08e821c04f990fe0832d", "orderId": "BKLY-123"}},
+    })
+    service = BookingService(repository=NoMongo())
+    headers = {"x-auth-token-user": "opaque-token"}
+
+    service.create_external_booking({"vendorId": "vendor-1"}, headers)
+
+    assert client.post.call_args.kwargs["headers"] == headers
 
 
 def test_view_external_booking_forwards_only_expected_auth_headers(monkeypatch):
