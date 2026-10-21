@@ -604,6 +604,8 @@ def run_confirm_booking(ctx: ToolContext, args: confirm_booking) -> dict:
                 return {"error": str(exc), "retry_safe": False}
     booking = result["results"]["booking"]
 
+    logger.info("Booking created: %s", booking)
+
     request_id = booking["orderId"]
     booking_id = booking["_id"]
     ctx.booking_result = {
