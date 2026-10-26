@@ -13,8 +13,9 @@ class Settings(BaseSettings):
     openai_model: str = "gpt-4o-mini"
     openai_embedding_model: str = "text-embedding-3-small"
 
-    categories_api_url: str = "http://localhost:4006/user/allCategories"
-    salon_info_api_url: str = "https://admin.bookly.ae:2053/user/viewVendor"
+    categories_api_url: str = "https://test.bookly.ae:2087/user/allCategories"
+    salon_info_api_url: str = "https://test.bookly.ae:2087/user/viewVendor"
+    bookly_api_token: str = ""
     booking_create_api_url: str = "http://15.252.235.83:2053/booking/createBooking"
     booking_view_api_url: str = "http://15.252.235.83:2053/booking/viewBooking"
     booking_api_timeout_seconds: int = 15

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -38,6 +38,8 @@ class UserProfile(BaseModel):
 
 
 class SessionContext(BaseModel):
+    model_config = {"extra": "ignore"}
+
     """Lightweight per-session user context stored in conversation state."""
 
     user_id: str | None = None
@@ -64,6 +66,10 @@ class ChatRequest(BaseModel):
 class SessionStartRequest(BaseModel):
     session_id: str = Field(..., min_length=1)
     user_id: str | None = None
+
+class LoginResponse(BaseModel):
+    authenticated: bool
+    user_id: str
 
 
 class BookingContactUpdate(BaseModel):

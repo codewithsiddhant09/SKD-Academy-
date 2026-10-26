@@ -58,52 +58,68 @@ def mock_success(monkeypatch, result):
 
 
 def test_booking_api_payload_and_success(monkeypatch):
-    client = mock_success(monkeypatch, {"error": False, "results": {"booking": {"_id": "6acf08e821c04f990fe0832d", "orderId": "BKLY-123", "bookingStatus": "Pending", "paymentStatus": "Pending"}}})
+    client = mock_success(monkeypatch, {"error": False, "results": {"booking": {"_id": "6acf08e821c04f990fe0832d", "orderId": "BKLY-123", "bookingStatus": "Pending", "paymentStatus": "Pending", "paymentUrl": "https://pay.example/checkout"}}})
     ctx = ready_context()
+    ctx.session.payment_option = "Pay Now"
+    monkeypatch.setattr("app.core.config.get_settings", lambda: type("Settings", (), {"bookly_api_token": "app-api-token"})())
 
-    result = run_confirm_booking(ctx, confirm_booking())
+    result = run_confirm_booking(ctx, confirm_booking(payment_option="Pay Now"))
 
     sent = client.post.call_args.kwargs["json"]
     assert client.post.call_args.args[0].endswith("/booking/createBooking")
     assert sent["vendorId"] == "6ac4899b6b8a5b0808cad3a8"
     assert sent["serviceId"] == ["6ac48ac68aa334febff8f837"]
+    assert sent["payOption"] == "Pay Now"
     assert sent["slot"] == "04:20 PM"
-    assert sent["bookingcreatedBy"] == "6a95256c6e2ce14bdd67a45a"
+    assert "bookingcreatedBy" not in sent
     assert sent["location"] == {"type": "Point", "coordinates": [77.3887, 28.6167]}
     assert result["order_id"] == "BKLY-123"
     assert result["booking_id"] == "6acf08e821c04f990fe0832d"
     assert result["booking_status"] == "Pending"
+    assert result["payment_url"] == "https://pay.example/checkout"
     assert ctx.session.last_booking_order_id == "BKLY-123"
 
 
-def test_requires_signed_in_customer(monkeypatch):
+def test_guest_booking_uses_app_token_without_customer_user_id(monkeypatch):
+    client = mock_success(monkeypatch, {"error": False, "results": {"booking": {"_id": "6acf08e821c04f990fe0832d", "orderId": "BKLY-123", "bookingStatus": "Pending", "paymentStatus": "Pending"}}})
     ctx = ready_context(user=False)
-    result = run_confirm_booking(ctx, confirm_booking())
-    assert "signed-in" in result["error"]
+    ctx.session.payment_option = "Pay Later"
+    monkeypatch.setattr("app.core.config.get_settings", lambda: type("Settings", (), {"bookly_api_token": "app-api-token"})())
+
+    result = run_confirm_booking(ctx, confirm_booking(payment_option="Pay Later"))
+
+    assert result["order_id"] == "BKLY-123"
+    assert "bookingcreatedBy" not in client.post.call_args.kwargs["json"]
+    assert client.post.call_args.kwargs["headers"]["x-auth-token"] == "app-api-token"
 
 
 def test_requires_contact_and_real_service_id():
     ctx = ready_context()
+    ctx.session.payment_option = "Pay Later"
     ctx.session.user.address = None
-    result = run_confirm_booking(ctx, confirm_booking())
+    result = run_confirm_booking(ctx, confirm_booking(payment_option="Pay Later"))
     assert "address" in result["error"]
 
     ctx = ready_context()
+    ctx.session.payment_option = "Pay Later"
     ctx.session.known_salons[ctx.session.draft.salon_id].offers[0].id = "mock-service"
-    result = run_confirm_booking(ctx, confirm_booking())
+    result = run_confirm_booking(ctx, confirm_booking(payment_option="Pay Later"))
     assert "real Bookly service ID" in result["error"]
 
 
 def test_api_rejection_and_http_errors(monkeypatch):
     mock_success(monkeypatch, {"error": True, "message": "Invalid vendor"})
     result = ready_context()
-    assert "Invalid vendor" in run_confirm_booking(result, confirm_booking())["error"]
+    result.session.payment_option = "Pay Later"
+    assert "Invalid vendor" in run_confirm_booking(result, confirm_booking(payment_option="Pay Later"))["error"]
 
     client = mock_success(monkeypatch, {})
     client.post.return_value.raise_for_status.side_effect = httpx.HTTPStatusError(
         "bad", request=Mock(), response=Mock(status_code=503, text="unavailable")
     )
-    result = run_confirm_booking(ready_context(), confirm_booking())
+    ctx = ready_context()
+    ctx.session.payment_option = "Pay Later"
+    result = run_confirm_booking(ctx, confirm_booking(payment_option="Pay Later"))
     assert "HTTP 503" in result["error"]
 
 
@@ -113,7 +129,9 @@ def test_timeout_is_not_safe_to_retry(monkeypatch):
     client.__exit__ = Mock(return_value=False)
     client.post.side_effect = httpx.TimeoutException("timed out")
     monkeypatch.setattr("app.services.booking_service.httpx.Client", lambda **kwargs: client)
-    result = run_confirm_booking(ready_context(), confirm_booking())
+    ctx = ready_context()
+    ctx.session.payment_option = "Pay Later"
+    result = run_confirm_booking(ctx, confirm_booking(payment_option="Pay Later"))
     assert result["retry_safe"] is False
     assert "verify booking status" in result["error"]
 
@@ -139,7 +157,7 @@ def test_create_booking_route_forwards_payload_and_auth_headers(monkeypatch):
     monkeypatch.setattr(deps, "assistant", assistant)
     payload = {"vendorId": "vendor-1", "serviceId": ["service-1"]}
     headers = {
-        "x-auth-language": "English", "x-user-type": "User", "x-auth-token-user": "test-token",
+        "x-auth-language": "English", "x-user-type": "User", "x-auth-token": "test-token",
     }
 
     response = TestClient(fastapi_app).post("/api/v1/book-appointment", json=payload, headers=headers)
@@ -155,7 +173,7 @@ def test_create_external_booking_passes_auth_headers(monkeypatch):
         "results": {"booking": {"_id": "6acf08e821c04f990fe0832d", "orderId": "BKLY-123"}},
     })
     service = BookingService(repository=NoMongo())
-    headers = {"x-auth-token-user": "opaque-token"}
+    headers = {"x-auth-language": "English", "x-user-type": "User", "x-auth-token": "opaque-token"}
 
     service.create_external_booking({"vendorId": "vendor-1"}, headers)
 
@@ -165,7 +183,8 @@ def test_create_external_booking_passes_auth_headers(monkeypatch):
 def test_view_external_booking_forwards_only_expected_auth_headers(monkeypatch):
     booking = {
         "_id": "6acf08e821c04f990fe0832d", "orderId": "BKLY-14102026-001",
-        "bookingStatus": "Pending", "paymentStatus": "Pending",
+        "bookingStatus": "Pending", "paymentStatus": "Pending", "finalAmount": 944,
+        "date": "2026-10-14", "slot": "04:20 PM", "services": [{"_id": "service-1", "name": "Hair"}],
     }
     response = Mock()
     response.raise_for_status.return_value = None
@@ -178,13 +197,17 @@ def test_view_external_booking_forwards_only_expected_auth_headers(monkeypatch):
 
     result = BookingService(repository=NoMongo()).view_external_booking(
         "6acf08e821c04f990fe0832d",
-        {"x-auth-language": "English", "x-user-type": "User", "x-auth-token-user": "not-a-real-token"},
+        {"x-auth-language": "English", "x-user-type": "User", "x-auth-token": "not-a-real-token"},
     )
 
     assert result["orderId"] == "BKLY-14102026-001"
+    assert result["finalAmount"] == 944
+    assert result["paymentStatus"] == "Pending"
+    assert result["services"][0]["name"] == "Hair"
+    assert result["slot"] == "04:20 PM"
     assert client.get.call_args.args[0].endswith("/booking/viewBooking/6acf08e821c04f990fe0832d")
     assert set(client.get.call_args.kwargs["headers"]) == {
-        "x-auth-language", "x-user-type", "x-auth-token-user",
+        "x-auth-language", "x-user-type", "x-auth-token",
     }
 
 
@@ -208,6 +231,7 @@ def test_view_booking_route_returns_restricted_booking_fields(monkeypatch):
         "_id": "6acf08e821c04f990fe0832d", "orderId": "BKLY-14102026-001",
         "bookingStatus": "Pending", "paymentStatus": "Pending", "completionCode": 123456,
         "date": "2026-10-14T00:00:00.000Z", "slot": "04:20 PM", "BookingAppointment": "Home",
+        "finalAmount": 944, "paymentUrl": "https://pay.example/checkout",
         "vendorId": {"businessName": "Test salon"},
         "services": [{"_id": "service-1", "name": "Hair", "price": 899}],
         "contactId": {"contactName": "Test", "address": "1 Main Street", "email": "private@example.com"},
@@ -223,6 +247,8 @@ def test_view_booking_route_returns_restricted_booking_fields(monkeypatch):
     assert response.status_code == 200
     result = response.json()["booking"]
     assert result["order_id"] == "BKLY-14102026-001"
+    assert result["final_amount"] == 944
+    assert result["payment_url"] == "https://pay.example/checkout"
     assert result["salon"] == "Test salon"
     assert result["services"][0]["name"] == "Hair"
     assert "completionCode" not in result
@@ -256,7 +282,7 @@ def test_view_external_booking_rejects_api_error(monkeypatch):
     with pytest.raises(RuntimeError, match="Booking not found"):
         BookingService(repository=NoMongo()).view_external_booking(
             "6acf08e821c04f990fe0832d",
-            {"x-auth-language": "English", "x-user-type": "User", "x-auth-token-user": "not-a-real-token"},
+            {"x-auth-language": "English", "x-user-type": "User", "x-auth-token": "not-a-real-token"},
         )
 
 

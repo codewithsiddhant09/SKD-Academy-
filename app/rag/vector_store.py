@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import List, Tuple
 
+import chromadb
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
 from langchain_openai import OpenAIEmbeddings
@@ -36,10 +37,17 @@ class RagStore:
             model=self.settings.openai_embedding_model,
             api_key=self.settings.openai_api_key,
         )
+        # Chroma 1.5's default Rust binding crashes in this Windows runtime on
+        # collection reads and writes. Keep the local persistent store on its
+        # Python segment backend; this opens the existing data in place.
+        client_settings = chromadb.config.Settings(
+            chroma_api_impl="chromadb.api.segment.SegmentAPI"
+        )
         self._vectorstore = Chroma(
             collection_name=self.settings.rag_collection_name,
             persist_directory=str(persist_dir),
             embedding_function=self._embeddings,
+            client_settings=client_settings,
         )
 
     def upsert_documents(self, docs: list[Document]) -> None:

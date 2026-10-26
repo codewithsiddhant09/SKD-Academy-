@@ -82,11 +82,16 @@ Booking rules:
   only named a category (e.g. Lashes) and the salon offers several services in it, ask which one.
   If it reports problems (service not offered, time not available, past date), explain them
   plainly and offer options: another service or time at this salon, or other salons.
-- When update_booking says ready_for_summary, show this summary and ask the customer to confirm:
-  Service, Salon, Date (e.g. 25 December 2026), Time (e.g. 4:00 PM).
-- Only call confirm_booking after the customer explicitly confirms that summary. It creates the
-  booking through Bookly's booking API. Report its order ID and returned booking/payment statuses
-  exactly; never claim it is confirmed or paid unless the API says so. Never collect payment in chat.
+- When update_booking says ready_for_summary, show the summary (service, salon, date and time), then
+  offer exactly two choices: Pay Now or Pay Later. Do not create a new booking until the customer selects one.
+  If no clear choice is present, ask the customer to choose and wait; do not call confirm_booking.
+- Once the customer explicitly chooses, call confirm_booking with payment_option exactly "Pay Now" or
+  "Pay Later". A plain approval of the summary (such as "yes" or "proceed") is not a payment choice;
+  ask them to select one. Never infer a payment choice from context. The API creates the booking for either choice.
+  For Pay Now, show the payment URL returned in the booking's payOption field when present; do not claim
+  payment completed unless the API says so. For Pay Later, do not show a payment URL.
+- For changes to an existing booking request, retain the existing explicit summary confirmation flow and
+  do not ask for or change its payment option.
 
 Existing booking requests (IDs like BKLY-09102026-004):
 - When the customer gives a request ID or asks about an existing request, call get_booking_request and
@@ -159,7 +164,9 @@ class BookingAssistant:
             "current_time": now.strftime("%H:%M"),
             "customer_name": session.user.full_name if session.user else None,
             "booking_draft": session.draft.model_dump(include={"service", "salon", "salon_id", "date", "time"}),
+            "booking_summary_awaiting_payment_choice": session.awaiting_confirmation and not session.editing_request,
             "summary_shown_awaiting_confirmation": session.awaiting_confirmation,
+            "selected_payment_option": session.payment_option,
             "modifying_request_id": session.editing_request.get("request_id") if session.editing_request else None,
             "salons_seen": [
                 {"salon_id": s.vendor_id, "name": s.salon_name, "services": s.services}
@@ -192,6 +199,9 @@ class BookingAssistant:
             bookings=self.bookings,
             knowledge=self.knowledge,
         )
+        payment_choice_required = session.awaiting_confirmation and not session.editing_request
+        if payment_choice_required:
+            session.payment_option = self._payment_choice(user_message)
         called: list[str] = []
         reply = self._converse(session, ctx, user_message, called)
         rid = (ctx.booking_result or {}).get("request_id")
@@ -208,6 +218,8 @@ class BookingAssistant:
             session.awaiting_confirmation = all([d.service, d.salon_id, d.date, d.time]) and draft_differs_from_request(
                 session
             )
+            if not session.awaiting_confirmation:
+                session.payment_option = None
         session.add_message("user", user_message)
         session.add_message("assistant", reply)
 
@@ -222,6 +234,7 @@ class BookingAssistant:
                 "tools_called": called,
                 "booking_payload": session.draft.model_dump(),
                 "awaiting_confirmation": session.awaiting_confirmation,
+                "payment_option": session.payment_option,
                 "booking_response": ctx.booking_result,
                 "booking_contact_required": bool(session.awaiting_confirmation and session.user and session.user.user_id and not session.last_booking_order_id),
                 "user_context": session.user.model_dump(include={"user_id", "full_name"}) if session.user else None,
@@ -239,9 +252,8 @@ class BookingAssistant:
             *session.history,
             {"role": "user", "content": user_message},
         ]
-        # While a summary awaits confirmation, the first step must be an explicit tool decision
-        # (confirm_booking, update_booking, reset_booking, no_action, ...). Without this the model
-        # sometimes answered "your request has been submitted" without submitting anything.
+        # While a booking awaits a payment choice, require an explicit tool decision rather than
+        # letting the model claim a booking was created without calling the booking API.
         tool_choice = "required" if session.awaiting_confirmation else "auto"
         try:
             for _ in range(MAX_TOOL_ROUNDS):
@@ -275,6 +287,16 @@ class BookingAssistant:
             return None
         logger.warning("LLM_TOOL_LOOP_LIMIT: session=%s tools=%s", session.session_id, called)
         return None
+
+    @staticmethod
+    def _payment_choice(message: str) -> str | None:
+        """Recognize only an explicit Pay Now or Pay Later selection."""
+        normalized = " ".join(message.lower().replace("-", " ").split())
+        pay_now = any(phrase in normalized for phrase in ("pay now", "pay immediately", "pay upfront"))
+        pay_later = any(phrase in normalized for phrase in ("pay later", "pay afterward", "pay afterwards"))
+        if pay_now == pay_later:
+            return None
+        return "Pay Now" if pay_now else "Pay Later"
 
     @staticmethod
     def _cards(session: Session, salon_ids: list[str], notes: dict[str, str]) -> list[SalonRecommendation]:

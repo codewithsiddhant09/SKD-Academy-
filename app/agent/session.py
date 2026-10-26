@@ -18,6 +18,7 @@ class Session:
     session_id: str
     history: list[dict[str, str]] = field(default_factory=list)
     user: SessionContext | None = None
+    auth_token: str | None = field(default=None, repr=False)
     # Every salon the assistant has seen via search_salons, by vendor id.
     # Booking may only reference these, so the salon's service list is always known.
     known_salons: dict[str, Salon] = field(default_factory=dict)
@@ -26,8 +27,10 @@ class Session:
     location: str | None = None
     booking_contact: dict | None = None
     last_booking_order_id: str | None = None
-    # True once a complete draft was summarised to the customer in an earlier turn.
+    # True once a complete draft was summarised and awaits payment choice or modification confirmation.
     awaiting_confirmation: bool = False
+    # Set only from a customer's explicit choice after they saw the summary.
+    payment_option: str | None = None
     # Counts customer messages; used to require that a request was shown before it is cancelled.
     turn: int = 0
     # request_id -> turn in which its details were shown to the customer.
@@ -36,6 +39,9 @@ class Session:
     # (same request_id) instead of creating a new one. Holds the request as it was when loaded.
     editing_request: dict | None = None
     last_seen: float = field(default_factory=time.time)
+
+    def __repr__(self) -> str:
+        return f"Session(session_id={self.session_id!r}, user_id={self.user.user_id if self.user else None!r})"
 
     def add_message(self, role: str, content: str) -> None:
         self.history.append({"role": role, "content": content})

@@ -160,12 +160,16 @@ class get_my_bookings(BaseModel):
 
 
 class confirm_booking(BaseModel):
-    """WHAT: Sends the booking draft to the salon as a booking request (status pending). When an existing
-    request is being modified (modify_booking_request), it saves the changes on that same request ID instead.
-    The salon accepts or rejects it; the customer is then notified in the Bookly app and
-    pays there. The chatbot never handles payment.
-    WHY: Call ONLY after you showed the customer the complete booking summary in a previous
-    message and they explicitly agreed (e.g. 'yes', 'confirm'). It fails otherwise."""
+    """WHAT: Creates the booking through Bookly's booking API using the customer's selected payment option.
+    WHY: For a new booking, call ONLY after showing the complete summary, offering Pay Now and Pay Later,
+    and the customer explicitly selects one of those options. Do not call when they only approve the summary.
+    For an existing request being modified, call after the customer confirms the revised summary; do not
+    request or change its payment option."""
+
+    payment_option: Literal["Pay Now", "Pay Later"] | None = Field(
+        default=None,
+        description="For a new booking, the customer's explicit choice after the summary: exactly 'Pay Now' or 'Pay Later'. Null only when modifying an existing booking request."
+    )
 
 
 class get_booking_request(BaseModel):
@@ -485,7 +489,8 @@ def run_update_booking(ctx: ToolContext, args: update_booking) -> dict:
 
     if candidate != ctx.session.draft:
         ctx.session.draft = candidate
-        ctx.session.awaiting_confirmation = False  # any real change needs a fresh summary + confirmation
+        ctx.session.awaiting_confirmation = False  # any real change needs a fresh summary + payment choice
+        ctx.session.payment_option = None
     logger.info("BOOKING_UPDATED: %s", candidate.model_dump(exclude_none=True))
     return {"applied": True, **_draft_view(ctx)}
 
@@ -533,6 +538,14 @@ def run_confirm_booking(ctx: ToolContext, args: confirm_booking) -> dict:
         return {"error": f"Booking incomplete, missing: {', '.join(view['missing'])}.", **view}
     if not session.awaiting_confirmation:
         return {"error": "Show the customer the full booking summary and get their explicit confirmation first.", **view}
+    if session.editing_request:
+        payment_option = None
+    else:
+        payment_option = session.payment_option
+        if payment_option not in {"Pay Now", "Pay Later"}:
+            return {"error": "Ask the customer to choose Pay Now or Pay Later before creating the booking.", **view}
+        if args.payment_option != payment_option:
+            return {"error": "Use only the payment option the customer explicitly selected in their latest message.", **view}
     problems = _validate(ctx, session.draft)  # re-check: e.g. the date may have passed meanwhile
     if problems:
         return {"error": "Booking is no longer valid.", "problems": problems, **view}
@@ -542,22 +555,21 @@ def run_confirm_booking(ctx: ToolContext, args: confirm_booking) -> dict:
     offer = next((o for o in salon.offers if o.name.lower() == d.service.lower()), None)
     if session.editing_request:
         return _save_modification(ctx, offer)
-    if not user or not user.user_id:
-        return {"error": "Booking requires a signed-in Bookly account. Sign in and try again."}
     contact = session.booking_contact or {}
     def value(key: str, profile_value: Any = None) -> Any:
         candidate = contact.get(key)
         return candidate if candidate is not None and candidate != "" else profile_value
 
-    contact_name = value("contact_name", user.full_name)
-    email = value("email", user.email)
-    country_code = value("country_code", user.country_code)
-    phone = value("phone_number", user.phone_number)
-    address = value("address", user.address)
-    city = value("city", user.city)
-    zip_code = value("zip_code", user.zip_code)
-    latitude = value("latitude", user.latitude)
-    longitude = value("longitude", user.longitude)
+    profile = session.user
+    contact_name = value("contact_name", profile.full_name if profile else None)
+    email = value("email", profile.email if profile else None)
+    country_code = value("country_code", profile.country_code if profile else None)
+    phone = value("phone_number", profile.phone_number if profile else None)
+    address = value("address", profile.address if profile else None)
+    city = value("city", profile.city if profile else None)
+    zip_code = value("zip_code", profile.zip_code if profile else None)
+    latitude = value("latitude", profile.latitude if profile else None)
+    longitude = value("longitude", profile.longitude if profile else None)
     required = {
         "contact name": contact_name,
         "email": email,
@@ -577,6 +589,7 @@ def run_confirm_booking(ctx: ToolContext, args: confirm_booking) -> dict:
     booking_payload = {
         "vendorId": salon.vendor_id,
         "serviceId": [offer.id],
+        **({"payOption": payment_option} if payment_option else {}),
         "bookingType": "Individual",
         "date": d.date,
         "slot": time.fromisoformat(d.time).strftime("%I:%M %p"),
@@ -592,28 +605,31 @@ def run_confirm_booking(ctx: ToolContext, args: confirm_booking) -> dict:
         "phoneNumber": phone,
         "address": address,
         "city": city,
-        "bookingcreatedBy": user.user_id,
         "zipCode": zip_code,
         "location": {"type": "Point", "coordinates": [float(longitude), float(latitude)]},
         "additionalNote": contact.get("additional_note"),
     }
     try:
-        result = ctx.bookings.create_external_booking(booking_payload)
+        token = get_settings().bookly_api_token
+        auth_headers = {"x-auth-language": "English", "x-user-type": "User", "x-auth-token": token} if token else None
+        result = ctx.bookings.create_external_booking(booking_payload, auth_headers)
     except RuntimeError as exc:
         logger.warning("BOOKING_API_FAILED: %s", exc)
-                return {"error": str(exc), "retry_safe": False}
+        return {"error": str(exc), "retry_safe": False}
     booking = result["results"]["booking"]
 
     logger.info("Booking created: %s", booking)
 
     request_id = booking["orderId"]
     booking_id = booking["_id"]
+    payment_url = (booking.get("paymentUrl") or booking.get("payment_url")) if payment_option == "Pay Now" else None
     ctx.booking_result = {
         "booking_id": booking_id,
         "order_id": request_id,
-
         "status": booking.get("bookingStatus", "Pending"),
         "payment_status": booking.get("paymentStatus", "Pending"),
+        "payment_option": payment_option,
+        **({"payment_url": payment_url} if payment_url else {}),
         "salon": salon.salon_name,
         "service": d.service,
         "date": d.date,
@@ -623,16 +639,20 @@ def run_confirm_booking(ctx: ToolContext, args: confirm_booking) -> dict:
     session.last_booking_order_id = request_id
     session.draft = BookingPayload()
     session.awaiting_confirmation = False
-        return {
+    session.payment_option = None
+    result = {
         "submitted": True,
         "booking_id": booking_id,
         "order_id": request_id,
-
-
         "booking_status": booking.get("bookingStatus", "Pending"),
         "payment_status": booking.get("paymentStatus", "Pending"),
+        "payment_option": payment_option,
         "tell_customer": f"Your booking was created with order ID {request_id}. Its current status is {booking.get('bookingStatus', 'Pending')}; payment status is {booking.get('paymentStatus', 'Pending')}.",
     }
+    if payment_url:
+        result["payment_url"] = payment_url
+        result["tell_customer"] += " Complete your payment using the payment link returned by Bookly."
+    return result
 
 
 

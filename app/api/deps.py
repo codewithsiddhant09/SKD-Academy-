@@ -5,6 +5,7 @@ from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.rag.ingest import DOCUMENTS_DIR
 from app.rag.vector_store import create_rag_store, load_docs_from_directory
+from app.services.booking_service import BookingService
 from app.services.category_service import CategoryService
 from app.services.user_service import UserService
 
@@ -12,6 +13,7 @@ logger = get_logger(__name__)
 
 category_service = CategoryService()
 user_service = UserService()
+booking_service = BookingService()
 assistant: BookingAssistant | None = None
 
 

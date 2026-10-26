@@ -70,7 +70,7 @@ class BookingService:
     def vat_percentage(self) -> float:
         return float(get_settings().booking_vat_percentage)
 
-                def create_external_booking(
+    def create_external_booking(
         self, payload: dict[str, Any], auth_headers: dict[str, str] | None = None
     ) -> dict[str, Any]:
         """Create a Bookly booking once; never retry ambiguous POST failures."""
@@ -98,10 +98,16 @@ class BookingService:
         return result
 
     def view_external_booking(self, booking_id: str, auth_headers: dict[str, str]) -> dict[str, Any]:
-        """Fetch one Bookly booking using the caller's Bookly auth headers."""
+        """Fetch one Bookly booking using the app's Bookly API token."""
         settings = get_settings()
         url = f"{settings.booking_view_api_url.rstrip('/')}/{booking_id}"
-        headers = {key: auth_headers[key] for key in ("x-auth-language", "x-user-type", "x-auth-token-user")}
+        headers = {
+            "x-auth-language": auth_headers.get("x-auth-language", "English"),
+            "x-user-type": auth_headers.get("x-user-type", "User"),
+            "x-auth-token": auth_headers.get("x-auth-token") or get_settings().bookly_api_token,
+        }
+        if not headers["x-auth-token"]:
+            raise RuntimeError("BOOKLY_API_TOKEN is not configured.")
         try:
             with httpx.Client(timeout=settings.booking_api_timeout_seconds, verify=settings.booking_api_verify_ssl) as client:
                 response = client.get(url, headers=headers)
@@ -122,6 +128,15 @@ class BookingService:
         booking = (result.get("results") or {}).get("booking") if isinstance(result.get("results"), dict) else None
         if not isinstance(booking, dict) or str(booking.get("_id")) != booking_id:
             raise RuntimeError("Booking API response did not contain the requested booking details.")
+        if not booking.get("orderId"):
+            raise RuntimeError("Booking API response did not contain the booking orderId.")
+        booking["bookingId"] = booking.get("_id")
+        booking["bookingStatus"] = booking.get("bookingStatus", booking.get("status"))
+        booking["paymentStatus"] = booking.get("paymentStatus", booking.get("payment_status"))
+        booking["finalAmount"] = booking.get("finalAmount", booking.get("final_amount"))
+        booking["date"] = booking.get("date", booking.get("requestedDate"))
+        booking["slot"] = booking.get("slot", booking.get("requestedTime"))
+        booking["services"] = booking.get("services") or booking.get("serviceId") or []
         return booking
 
 

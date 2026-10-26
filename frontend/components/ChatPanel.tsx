@@ -1,7 +1,7 @@
 'use client';
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
-import { CheckCircle2, Loader2, MapPin, Send, Sparkles } from 'lucide-react';
+import { CheckCircle2, Loader2, LogIn, LogOut, MapPin, Send, Sparkles } from 'lucide-react';
 import { dashboardData } from '../lib/dashboard-data';
 import { MarkdownMessage } from './MarkdownMessage';
 
@@ -64,6 +64,11 @@ export function ChatPanel({ onDebugUpdate }: ChatPanelProps) {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [userId, setUserId] = useState<string | null>(null);
+  const [tokenAvailable, setTokenAvailable] = useState(false);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [authBusy, setAuthBusy] = useState(false);
   const [debugState, setDebugState] = useState<DebugState>(defaultDebugState);
   const [rawJson, setRawJson] = useState<Record<string, unknown>>({});
   const messageEndRef = useRef<HTMLDivElement | null>(null);
@@ -108,12 +113,91 @@ export function ChatPanel({ onDebugUpdate }: ChatPanelProps) {
   }, [messages]);
 
   useEffect(() => {
+    try {
+      const stored = window.sessionStorage.getItem('bookly-login-session');
+      if (stored) {
+        const parsed = JSON.parse(stored) as { sessionId?: string; email?: string; userId?: string };
+        if (parsed.sessionId === sessionId && parsed.email) setEmail(parsed.email);
+        if (parsed.sessionId === sessionId && parsed.userId) {
+          setUserId(parsed.userId);
+          void restoreLogin(parsed.userId);
+        }
+      }
+    } catch {
+      // Ignore unavailable browser session storage.
+    }
+  }, [sessionId]);
+
+  useEffect(() => {
     onDebugUpdate?.(debugItems, rawJson);
   }, [debugItems, onDebugUpdate, rawJson]);
 
   useEffect(() => {
     messageEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, loading]);
+
+  async function restoreLogin(currentUserId: string) {
+    try {
+      const response = await fetch(`/api/v1/auth/session/${encodeURIComponent(sessionId)}`, {
+        credentials: 'same-origin',
+      });
+      const data = await response.json();
+      if (!response.ok || data?.authenticated !== true) throw new Error('Session expired');
+      setUserId(data.user_id || currentUserId);
+      setTokenAvailable(true);
+    } catch {
+      setUserId(null);
+      setTokenAvailable(false);
+      try { window.sessionStorage.removeItem('bookly-login-session'); } catch { /* Ignore unavailable storage. */ }
+    }
+  }
+
+  async function handleLogin(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!email.trim() || !password) return;
+    setAuthBusy(true);
+    setError(null);
+    try {
+      const response = await fetch('/api/v1/auth/login', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', 'x-auth-language': 'English', 'x-user-type': 'User' },
+        body: JSON.stringify({ session_id: sessionId, email: email.trim(), password, language: 'English' }),
+      });
+      const data = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(data?.detail || 'Bookly login failed');
+      if (typeof data?.user_id !== 'string') throw new Error('Login response did not include a user ID');
+      setUserId(data.user_id);
+      setTokenAvailable(true);
+      setPassword('');
+      try {
+        window.sessionStorage.setItem('bookly-login-session', JSON.stringify({
+          sessionId,
+          userId: data.user_id,
+          email: email.trim(),
+        }));
+      } catch {
+        // Keep login active in memory if session storage is unavailable.
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Bookly login failed');
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  function handleLogout() {
+    setUserId(null);
+    setTokenAvailable(false);
+    setEmail('');
+    setPassword('');
+    try {
+      window.sessionStorage.removeItem('bookly-login-session');
+      void fetch(`/api/v1/auth/session/${encodeURIComponent(sessionId)}`, { method: 'DELETE', credentials: 'same-origin' });
+    } catch {
+      // Ignore unavailable browser session storage.
+    }
+  }
 
   async function sendMessage(message: string) {
     if (!message.trim()) {
@@ -138,11 +222,11 @@ export function ChatPanel({ onDebugUpdate }: ChatPanelProps) {
     try {
       const response = await fetch('/chat', {
         method: 'POST',
+        credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           session_id: sessionId,
-          // Optional: open the page with ?user_id=<Mongo user _id> to chat as a signed-in customer.
-          user_id: new URLSearchParams(window.location.search).get('user_id'),
+          user_id: userId,
           message,
           history: messages.map((message) => ({ role: message.role, content: message.content })),
         }),
@@ -257,6 +341,31 @@ export function ChatPanel({ onDebugUpdate }: ChatPanelProps) {
           <Sparkles className="h-4 w-4" />
           Conversational first
         </span>
+      </div>
+
+      <div className="mb-5 rounded-2xl border border-secondary/20 bg-white p-4">
+        {userId ? (
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-sm text-slate-600">Signed in to Bookly</p>
+            <button type="button" onClick={handleLogout} className="inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm">
+              <LogOut className="h-4 w-4" /> Sign out
+            </button>
+          </div>
+        ) : (
+          <form onSubmit={handleLogin} className="grid gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
+            <label className="grid gap-1 text-sm text-slate-600">
+              Bookly email
+              <input type="email" autoComplete="username" required value={email} onChange={(event) => setEmail(event.target.value)} className="rounded-xl border px-3 py-2 text-text" />
+            </label>
+            <label className="grid gap-1 text-sm text-slate-600">
+              Password
+              <input type="password" autoComplete="current-password" required value={password} onChange={(event) => setPassword(event.target.value)} className="rounded-xl border px-3 py-2 text-text" />
+            </label>
+            <button disabled={authBusy} className="inline-flex items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2 font-semibold text-white disabled:opacity-60">
+              <LogIn className="h-4 w-4" /> {authBusy ? 'Signing in…' : 'Sign in'}
+            </button>
+          </form>
+        )}
       </div>
 
       <div className="mb-5 grid gap-3 sm:grid-cols-2">
