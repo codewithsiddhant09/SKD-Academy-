@@ -14,7 +14,8 @@ def set_booking_token(session_id: str) -> dict:
         raise HTTPException(status_code=503, detail="Service not initialized")
     if not deps.assistant.settings.bookly_api_token:
         raise HTTPException(status_code=503, detail="Bookly API token is not configured on the server")
-    deps.assistant.sessions.get(session_id).auth_token = deps.assistant.settings.bookly_api_token
+    session = deps.assistant.sessions.get(session_id)
+    session.auth_token = deps.assistant.settings.bookly_api_token
     return {"configured": True}
 
 

@@ -1,0 +1,71 @@
+version: '3.8'
+
+services:
+  # Bookly AI Agent Application
+  bookly-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: bookly-agent
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env.production
+    environment:
+      - MONGODB_URI=mongodb://mongodb:27017
+      - MONGODB_DB_NAME=bookly
+    depends_on:
+      - mongodb
+    restart: unless-stopped
+    volumes:
+      - ./logs:/app/logs
+      - ./.chroma:/app/.chroma
+    networks:
+      - bookly-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # MongoDB Database
+  mongodb:
+    image: mongo:6.0
+    container_name: bookly-mongodb
+    ports:
+      - "27017:27017"
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=admin
+      - MONGO_INITDB_ROOT_PASSWORD=your-secure-password
+      - MONGO_INITDB_DATABASE=bookly
+    volumes:
+      - mongodb-data:/data/db
+      - mongodb-config:/data/configdb
+    restart: unless-stopped
+    networks:
+      - bookly-network
+
+  # Nginx Reverse Proxy (Optional)
+  nginx:
+    image: nginx:alpine
+    container_name: bookly-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - bookly-agent
+    restart: unless-stopped
+    networks:
+      - bookly-network
+
+volumes:
+  mongodb-data:
+  mongodb-config:
+
+networks:
+  bookly-network:
+    driver: bridge

@@ -41,7 +41,7 @@ def test_selected_payment_option_is_sent_to_booking_api(monkeypatch, choice):
     result = tools.run_confirm_booking(ctx, tools.confirm_booking(payment_option=choice))
 
     payload = ctx.bookings.create_external_booking.call_args.args[0]
-    assert payload["payOption"] == choice
+    assert payload["payOption"] == ("PayNow" if choice == "Pay Now" else "PayAtStore")
     assert result["payment_option"] == choice
     if choice == "Pay Now":
         assert result["payment_url"] == "https://pay.example/checkout"

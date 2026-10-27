@@ -227,6 +227,7 @@ export function ChatPanel({ onDebugUpdate }: ChatPanelProps) {
         body: JSON.stringify({
           session_id: sessionId,
           user_id: userId,
+          platform: 'app',
           message,
           history: messages.map((message) => ({ role: message.role, content: message.content })),
         }),

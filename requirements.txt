@@ -24,3 +24,6 @@ python-socketio>=5.0.0
 
 # Dev / test
 pytest>=7.0.0
+
+# Timezone support for Windows
+tzdata>=2023.3

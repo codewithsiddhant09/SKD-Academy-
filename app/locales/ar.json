@@ -1,0 +1,41 @@
+{
+  "booking": {
+    "created": "تم إنشاء الحجز بنجاح",
+    "confirmed": "تم تأكيد الحجز",
+    "cancelled": "تم إلغاء الحجز بنجاح",
+    "payment_required": "الدفع مطلوب لتأكيد حجزك",
+    "payment_confirmed": "تم تأكيد الدفع",
+    "payment_timeout": "انتهت مهلة الدفع - تم إلغاء الحجز",
+    "refund_processing": "جارٍ معالجة استرداد الأموال",
+    "cancellation_not_allowed": "لا يمكن إلغاء الحجز بعد بدء الموعد"
+  },
+  "payment": {
+    "pay_now": "ادفع الآن",
+    "pay_at_store": "الدفع في الصالون",
+    "pay_later": "ادفع لاحقا",
+    "payment_hold_minutes": "يرجى إكمال الدفع خلال {{minutes}} دقيقة",
+    "payment_successful": "تم الدفع بنجاح",
+    "payment_failed": "فشل الدفع",
+    "refund_successful": "تمت معالجة الاسترداد بنجاح",
+    "refund_amount": "مبلغ الاسترداد: {{amount}} درهم",
+    "cancellation_fee": "رسوم الإلغاء: {{fee}} درهم"
+  },
+  "notifications": {
+    "booking_created": "تم إنشاء حجزك",
+    "booking_confirmed": "تم تأكيد موعدك",
+    "booking_cancelled": "تم إلغاء حجزك",
+    "new_booking_received": "تم استلام حجز جديد",
+    "payment_confirmed": "تم تأكيد الدفع للحجز",
+    "refund_processed": "تمت معالجة الاسترداد"
+  },
+  "errors": {
+    "invalid_payment_option": "خيار الدفع غير صالح",
+    "payment_link_failed": "فشل إنشاء رابط الدفع",
+    "booking_not_found": "الحجز غير موجود",
+    "cancellation_failed": "فشل الإلغاء",
+    "refund_failed": "فشل الاسترداد",
+    "vendor_required": "البائع / الصالون مطلوب",
+    "phone_required": "رقم الهاتف مطلوب",
+    "invalid_phone": "تنسيق رقم الهاتف غير صالح"
+  }
+}

@@ -9,6 +9,8 @@ def create_request(a, llm, sid="owner") -> str:
     """Book Hair Smoothing at Marina Luxe through the normal flow; returns the request ID."""
     call(a, sid, "search_salons", location="Dubai Marina")
     call(a, sid, "update_booking", **booking("Hair Smoothing", MARINA_LUXE, FUTURE, "16:00"))
+    a.sessions.get(sid).payment_option = "Pay Later"
+    a.sessions.get(sid).awaiting_confirmation = True
     llm.queue = ["Summary..."]
     a.chat(sid, "hair smoothing please")
     llm.queue = [[("confirm_booking", {})], "Submitted."]

@@ -19,6 +19,10 @@ class Session:
     history: list[dict[str, str]] = field(default_factory=list)
     user: SessionContext | None = None
     auth_token: str | None = field(default=None, repr=False)
+    jwt_token: str | None = field(default=None, repr=False)
+    booking_platform: str = "app"
+    whatsapp_phone: str | None = None
+    whatsapp_name: str | None = None
     # Every salon the assistant has seen via search_salons, by vendor id.
     # Booking may only reference these, so the salon's service list is always known.
     known_salons: dict[str, Salon] = field(default_factory=dict)
@@ -31,6 +35,8 @@ class Session:
     awaiting_confirmation: bool = False
     # Set only from a customer's explicit choice after they saw the summary.
     payment_option: str | None = None
+    booking_channel: str = "app"
+    cancellation_quote: dict | None = None
     # Counts customer messages; used to require that a request was shown before it is cancelled.
     turn: int = 0
     # request_id -> turn in which its details were shown to the customer.

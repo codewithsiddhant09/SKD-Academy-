@@ -160,16 +160,23 @@ class get_my_bookings(BaseModel):
 
 
 class confirm_booking(BaseModel):
-    """WHAT: Creates the booking through Bookly's booking API using the customer's selected payment option.
-    WHY: For a new booking, call ONLY after showing the complete summary, offering Pay Now and Pay Later,
-    and the customer explicitly selects one of those options. Do not call when they only approve the summary.
-    For an existing request being modified, call after the customer confirms the revised summary; do not
-    request or change its payment option."""
+    """Creates the Bookly booking, or confirms a chatbot request in local mode."""
 
-    payment_option: Literal["Pay Now", "Pay Later"] | None = Field(
-        default=None,
-        description="For a new booking, the customer's explicit choice after the summary: exactly 'Pay Now' or 'Pay Later'. Null only when modifying an existing booking request."
-    )
+    payment_option: Literal["Pay Now", "Pay Later"] | None = Field(default=None)
+    submit_to_bookly: bool | None = None
+
+
+class quote_booking_cancellation(BaseModel):
+    """Gets the current Bookly cancellation fee and refund quote for an order ID."""
+    order_id: str
+
+
+class cancel_bookly_booking(BaseModel):
+    """Cancels a Bookly booking after showing its quote/details and receiving explicit confirmation."""
+    order_id: str
+    reason: str | None = None
+    additional_notes: str | None = None
+    confirmed: bool = False
 
 
 class get_booking_request(BaseModel):
@@ -540,18 +547,53 @@ def run_confirm_booking(ctx: ToolContext, args: confirm_booking) -> dict:
         return {"error": "Show the customer the full booking summary and get their explicit confirmation first.", **view}
     if session.editing_request:
         payment_option = None
+    elif session.booking_platform == "whatsapp":
+        payment_option = session.payment_option or "Pay Later"
+        if args.payment_option not in {None, payment_option}:
+            return {"error": "Use only the payment option the customer selected.", **view}
     else:
         payment_option = session.payment_option
         if payment_option not in {"Pay Now", "Pay Later"}:
-            return {"error": "Ask the customer to choose Pay Now or Pay Later before creating the booking.", **view}
-        if args.payment_option != payment_option:
+            if not payment_option:
+                return {"error": "Ask the customer to choose Pay Now or Pay Later before creating the booking.", **view}
+            return {"error": "Invalid payment option. Choose Pay Now or Pay Later.", **view}
+        if args.payment_option is not None and args.payment_option != payment_option:
             return {"error": "Use only the payment option the customer explicitly selected in their latest message.", **view}
+    api_payment_option = ("PayNow" if payment_option == "Pay Now" else "PayAtStore") if payment_option else None
+    if session.booking_platform == "whatsapp" and api_payment_option is None:
+        api_payment_option = "PayAtStore"
     problems = _validate(ctx, session.draft)  # re-check: e.g. the date may have passed meanwhile
     if problems:
         return {"error": "Booking is no longer valid.", "problems": problems, **view}
 
     d, user = session.draft, session.user
     salon = session.known_salons[d.salon_id]
+    if args.submit_to_bookly is not True and session.booking_platform == "app":
+        doc = {
+            "userId": user.user_id if user and user.user_id else session.session_id,
+            "vendorId": d.salon_id,
+            "vendorName": salon.salon_name,
+            "services": [next((offer.id for offer in salon.offers if offer.name.lower() == d.service.lower()), "")],
+            "serviceName": d.service,
+            "categoryName": None,
+            "location": session.location,
+            "bookingType": "Individual",
+            "groupSize": 1,
+            "companions": [],
+            "date": f"{d.date} 00:00:00",
+            "slot": time.fromisoformat(d.time).strftime("%I:%M %p"),
+            "requestedDate": d.date,
+            "requestedTime": d.time,
+            "customer_name": user.full_name if user and user.full_name else "User",
+            "customer_phone": user.phone_number if user and user.phone_number else "",
+        }
+        request_id = ctx.bookings.submit_request(doc)
+        ctx.booking_result = {"request_id": request_id, "status": "pending", "user_id": user.user_id if user else None}
+        session.last_booking_order_id = request_id
+        session.draft = BookingPayload()
+        session.awaiting_confirmation = False
+        session.payment_option = None
+        return {"submitted": True, "request_id": request_id, "status": "pending"}
     offer = next((o for o in salon.offers if o.name.lower() == d.service.lower()), None)
     if session.editing_request:
         return _save_modification(ctx, offer)
@@ -561,7 +603,9 @@ def run_confirm_booking(ctx: ToolContext, args: confirm_booking) -> dict:
         return candidate if candidate is not None and candidate != "" else profile_value
 
     profile = session.user
-    contact_name = value("contact_name", profile.full_name if profile else None)
+    contact_name = value("contact_name", session.whatsapp_name if session.booking_platform == "whatsapp" else (profile.full_name if profile else None))
+    if session.booking_platform == "whatsapp" and not contact_name:
+        contact_name = "WhatsApp Customer"
     email = value("email", profile.email if profile else None)
     country_code = value("country_code", profile.country_code if profile else None)
     phone = value("phone_number", profile.phone_number if profile else None)
@@ -571,15 +615,11 @@ def run_confirm_booking(ctx: ToolContext, args: confirm_booking) -> dict:
     latitude = value("latitude", profile.latitude if profile else None)
     longitude = value("longitude", profile.longitude if profile else None)
     required = {
-        "contact name": contact_name,
-        "email": email,
-        "country code": country_code,
-        "phone number": phone,
-        "address": address,
-        "city": city,
-        "zip code": zip_code,
-        "latitude": latitude,
-        "longitude": longitude,
+        **({"contact name": contact_name, "email": email, "country code": country_code, "phone number": phone,
+            "address": address, "city": city, "zip code": zip_code, "latitude": latitude,
+            "longitude": longitude} if user and session.booking_platform == "app" else {}),
+        **({"contact name": contact_name, "phone number": session.whatsapp_phone or phone}
+            if session.booking_platform == "whatsapp" else {}),
     }
     missing_contact = [label for label, item in required.items() if item is None or item == ""]
     if missing_contact:
@@ -589,30 +629,35 @@ def run_confirm_booking(ctx: ToolContext, args: confirm_booking) -> dict:
     booking_payload = {
         "vendorId": salon.vendor_id,
         "serviceId": [offer.id],
-        **({"payOption": payment_option} if payment_option else {}),
+        "payOption": api_payment_option,
         "bookingType": "Individual",
         "date": d.date,
         "slot": time.fromisoformat(d.time).strftime("%I:%M %p"),
         "BookingAppointment": contact.get("booking_appointment", "Home"),
+        **({"mode": "whatsapp"} if session.booking_platform == "whatsapp" else {}),
         "contactName": contact_name,
-        "email": email,
+        **({"email": email} if email else {}),
         "couponId": contact.get("coupon_id"),
         "discountAmount": contact.get("discount_amount"),
         "finalAmount": contact.get("final_amount"),
         "vatPercentage": ctx.bookings.vat_percentage(),
         "vat": contact.get("vat"),
-        "countryCode": country_code,
-        "phoneNumber": phone,
-        "address": address,
-        "city": city,
-        "zipCode": zip_code,
-        "location": {"type": "Point", "coordinates": [float(longitude), float(latitude)]},
+        **({"countryCode": country_code} if country_code else {}),
+        "phoneNumber": (session.whatsapp_phone or phone) if session.booking_platform == "whatsapp" else phone,
+        **({"address": address, "city": city, "zipCode": zip_code} if address or city or zip_code else {}),
+        **({"location": {"type": "Point", "coordinates": [float(longitude), float(latitude)]}} if latitude is not None and longitude is not None else {}),
         "additionalNote": contact.get("additional_note"),
     }
     try:
-        token = get_settings().bookly_api_token
-        auth_headers = {"x-auth-language": "English", "x-user-type": "User", "x-auth-token": token} if token else None
-        result = ctx.bookings.create_external_booking(booking_payload, auth_headers)
+        if session.booking_platform == "whatsapp":
+            secret = get_settings().whatsapp_booking_secret
+            if not secret:
+                return {"error": "WhatsApp booking is not configured."}
+            result = ctx.bookings.create_external_booking(booking_payload, {"x-whatsapp-booking-key": secret})
+        else:
+            token = session.jwt_token or session.auth_token or get_settings().bookly_api_token
+            auth_headers = {"x-auth-language": "English", "x-user-type": "User", "x-auth-token": token} if token else None
+            result = ctx.bookings.create_external_booking(booking_payload, auth_headers)
     except RuntimeError as exc:
         logger.warning("BOOKING_API_FAILED: %s", exc)
         return {"error": str(exc), "retry_safe": False}
@@ -620,9 +665,11 @@ def run_confirm_booking(ctx: ToolContext, args: confirm_booking) -> dict:
 
     logger.info("Booking created: %s", booking)
 
-    request_id = booking["orderId"]
-    booking_id = booking["_id"]
-    payment_url = (booking.get("paymentUrl") or booking.get("payment_url")) if payment_option == "Pay Now" else None
+    request_id = booking.get("orderId")
+    booking_id = booking.get("_id")
+    if not request_id or not booking_id:
+        return {"error": "Bookly response did not include a booking ID and order ID. Verify status before retrying.", "retry_safe": False}
+    payment_url = (booking.get("paymentUrl") or booking.get("payment_url")) if api_payment_option == "PayNow" else None
     ctx.booking_result = {
         "booking_id": booking_id,
         "order_id": request_id,
@@ -634,7 +681,8 @@ def run_confirm_booking(ctx: ToolContext, args: confirm_booking) -> dict:
         "service": d.service,
         "date": d.date,
         "time": d.time,
-        "user_id": user.user_id,
+        "user_id": user.user_id if user else None,
+        "platform": session.booking_platform,
     }
     session.last_booking_order_id = request_id
     session.draft = BookingPayload()
@@ -808,6 +856,49 @@ def _save_modification(ctx: ToolContext, offer) -> dict:
     }
 
 
+def run_quote_booking_cancellation(ctx: ToolContext, args: quote_booking_cancellation) -> dict:
+    token = ctx.session.jwt_token or ctx.session.auth_token or get_settings().bookly_api_token
+    if not token:
+        return {"error": "BOOKLY_API_TOKEN is not configured."}
+    headers = {"x-auth-language": "English", "x-user-type": "User", "x-auth-token": token}
+    try:
+        quote = ctx.bookings.get_cancellation_amount(args.order_id, headers)
+    except RuntimeError as exc:
+        return {"error": str(exc)}
+    quote_booking_id = quote.get("bookingId") or quote.get("booking_id") or quote.get("_id")
+    if not quote_booking_id:
+        return {"error": "The cancellation quote did not include a booking record ID. Cancellation is unavailable until the booking ID can be confirmed."}
+    ctx.session.cancellation_quote = {**quote, "order_id": args.order_id, **({"bookingId": quote_booking_id} if quote_booking_id else {})}
+    return {"order_id": args.order_id, **quote}
+
+
+def run_cancel_bookly_booking(ctx: ToolContext, args: cancel_bookly_booking) -> dict:
+    if not args.confirmed:
+        return {"error": "Show the cancellation quote and ask for explicit confirmation first."}
+    quote = ctx.session.cancellation_quote
+    if not quote or quote.get("order_id") != args.order_id:
+        return {"error": "Fetch and show the cancellation quote before cancelling."}
+    booking_id = quote.get("bookingId") or quote.get("booking_id") or quote.get("_id")
+    if not booking_id:
+        return {"error": "The booking record ID is unavailable; cancellation was not sent. Retrieve the booking record by its Bookly booking ID first."}
+    if quote.get("allowed") is False:
+        return {"error": quote.get("reason") or "This booking cannot be cancelled."}
+    token = ctx.session.jwt_token or ctx.session.auth_token or get_settings().bookly_api_token
+    if not token:
+        return {"error": "BOOKLY_API_TOKEN is not configured."}
+    headers = {"x-auth-language": "English", "x-user-type": "User", "x-auth-token": token}
+    try:
+        result = ctx.bookings.cancel_external_booking(
+            {"bookingId": booking_id, "cancelledReason": args.reason or "Customer requested cancellation", "additionalNotes": args.additional_notes},
+            headers,
+        )
+    except RuntimeError as exc:
+        return {"error": str(exc)}
+    ctx.session.cancellation_quote = None
+    ctx.booking_result = {"order_id": args.order_id, "status": "Cancelled"}
+    return {"cancelled": True, "order_id": args.order_id, "result": result}
+
+
 def run_no_action(ctx: ToolContext, args: no_action) -> dict:
     return {"ok": True}
 
@@ -830,6 +921,8 @@ TOOLS: dict[str, tuple[type[BaseModel], ToolHandler]] = {
     "get_my_bookings": (get_my_bookings, run_get_my_bookings),
     "update_booking": (update_booking, run_update_booking),
     "confirm_booking": (confirm_booking, run_confirm_booking),
+    "quote_booking_cancellation": (quote_booking_cancellation, run_quote_booking_cancellation),
+    "cancel_bookly_booking": (cancel_bookly_booking, run_cancel_bookly_booking),
     "get_booking_request": (get_booking_request, run_get_booking_request),
     "modify_booking_request": (modify_booking_request, run_modify_booking_request),
     "cancel_booking_request": (cancel_booking_request, run_cancel_booking_request),

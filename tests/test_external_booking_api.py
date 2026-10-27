@@ -69,7 +69,7 @@ def test_booking_api_payload_and_success(monkeypatch):
     assert client.post.call_args.args[0].endswith("/booking/createBooking")
     assert sent["vendorId"] == "6ac4899b6b8a5b0808cad3a8"
     assert sent["serviceId"] == ["6ac48ac68aa334febff8f837"]
-    assert sent["payOption"] == "Pay Now"
+    assert sent["payOption"] == "PayNow"
     assert sent["slot"] == "04:20 PM"
     assert "bookingcreatedBy" not in sent
     assert sent["location"] == {"type": "Point", "coordinates": [77.3887, 28.6167]}
@@ -84,13 +84,22 @@ def test_guest_booking_uses_app_token_without_customer_user_id(monkeypatch):
     client = mock_success(monkeypatch, {"error": False, "results": {"booking": {"_id": "6acf08e821c04f990fe0832d", "orderId": "BKLY-123", "bookingStatus": "Pending", "paymentStatus": "Pending"}}})
     ctx = ready_context(user=False)
     ctx.session.payment_option = "Pay Later"
+    ctx.session.user = SessionContext(user_id="guest-session", phone_number="9999999999")
     monkeypatch.setattr("app.core.config.get_settings", lambda: type("Settings", (), {"bookly_api_token": "app-api-token"})())
 
     result = run_confirm_booking(ctx, confirm_booking(payment_option="Pay Later"))
 
+    assert "contact name" in result["error"]
+    client.post.assert_not_called()
+
+    ctx = ready_context(user=False)
+    ctx.session.payment_option = "Pay Later"
+    ctx.session.booking_contact = {"contact_name": "Guest", "phone_number": "9999999999", "email": "guest@example.com", "country_code": "+91", "address": "1 Street", "city": "Noida", "zip_code": "201309", "latitude": 28.6, "longitude": 77.3}
+    monkeypatch.setattr("app.core.config.get_settings", lambda: type("Settings", (), {"bookly_api_token": "app-api-token"})())
+    result = run_confirm_booking(ctx, confirm_booking(payment_option="Pay Later"))
     assert result["order_id"] == "BKLY-123"
     assert "bookingcreatedBy" not in client.post.call_args.kwargs["json"]
-    assert client.post.call_args.kwargs["headers"]["x-auth-token"] == "app-api-token"
+    assert client.post.call_args.kwargs["headers"] == {}
 
 
 def test_requires_contact_and_real_service_id():
@@ -197,7 +206,7 @@ def test_view_external_booking_forwards_only_expected_auth_headers(monkeypatch):
 
     result = BookingService(repository=NoMongo()).view_external_booking(
         "6acf08e821c04f990fe0832d",
-        {"x-auth-language": "English", "x-user-type": "User", "x-auth-token": "not-a-real-token"},
+        {"x-auth-language": "English", "x-user-type": "User", "x-auth-token-user": "not-a-real-token"},
     )
 
     assert result["orderId"] == "BKLY-14102026-001"

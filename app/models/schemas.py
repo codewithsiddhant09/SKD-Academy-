@@ -61,6 +61,12 @@ class ChatRequest(BaseModel):
     session_id: str = Field(..., min_length=1)
     message: str = Field(..., min_length=1)
     user_id: str | None = None
+    platform: Literal["app", "whatsapp"] = "app"
+    user_name: str | None = Field(default=None, alias="userName")
+    auth_token: str | None = None
+    payment_option: Literal["Pay Now", "Pay Later"] | None = None
+
+    model_config = {"populate_by_name": True}
 
 
 class SessionStartRequest(BaseModel):
@@ -143,6 +149,9 @@ class BookingPayload(BaseModel):
 
 class BookAppointmentRequest(BookingPayload):
     session_id: str = Field(..., min_length=1)
+    channel: Literal["app", "whatsapp"] = "app"
+    user_id: str | None = None
+    auth_token: str | None = None
 
 
 class BookingResponse(BaseModel):

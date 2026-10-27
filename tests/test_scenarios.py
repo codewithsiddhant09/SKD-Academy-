@@ -265,7 +265,10 @@ class TestConfirmation:
     def test_confirm_on_next_turn_books(self):
         a, llm = make_assistant(users=FakeUsers({"u1": "Sara"}))
         a.ensure_user_context("s", "u1")
+        a.sessions.get("s").booking_contact = {"contact_name": "Sara", "email": "sara@example.com", "country_code": "+971", "phone_number": "+971500000000", "address": "1 Main Street", "city": "Dubai", "zip_code": "00000", "latitude": 25.2, "longitude": 55.2}
+        a.sessions.get("s").payment_option = "Pay Later"
         ready_draft(a)
+        a.sessions.get("s").awaiting_confirmation = True
         llm.queue = ["Please confirm the summary."]
         a.chat("s", "that's everything")
         llm.queue = [[("confirm_booking", {})], "Booked, your ID is ..."]
@@ -287,7 +290,10 @@ class TestConfirmation:
 
     def test_resending_identical_values_keeps_confirmation_armed(self):
         a, llm = make_assistant()
+        a.sessions.get("s").booking_contact = {"contact_name": "Guest", "email": "guest@example.com", "country_code": "+971", "phone_number": "+971500000000", "address": "1 Main Street", "city": "Dubai", "zip_code": "00000", "latitude": 25.2, "longitude": 55.2}
+        a.sessions.get("s").payment_option = "Pay Later"
         ready_draft(a)
+        a.sessions.get("s").awaiting_confirmation = True
         llm.queue = ["Summary..."]
         a.chat("s", "done")
         llm.queue = [
@@ -299,8 +305,11 @@ class TestConfirmation:
 
     def test_confirm_revalidates_when_time_passed_meanwhile(self, monkeypatch):
         a, llm = make_assistant()
+        a.sessions.get("s").booking_contact = {"contact_name": "Guest", "email": "guest@example.com", "country_code": "+971", "phone_number": "+971500000000", "address": "1 Main Street", "city": "Dubai", "zip_code": "00000", "latitude": 25.2, "longitude": 55.2}
+        a.sessions.get("s").payment_option = "Pay Later"
         monkeypatch.setattr(tools, "now_local", lambda: datetime(2026, 10, 9, 10, 0, tzinfo=ZoneInfo("Asia/Dubai")))
         ready_draft(a, date="2026-10-09", time="13:00")
+        a.sessions.get("s").payment_option = "Pay Later"
         llm.queue = ["Summary..."]
         a.chat("s", "done")
         monkeypatch.setattr(tools, "now_local", lambda: datetime(2026, 10, 9, 11, 30, tzinfo=ZoneInfo("Asia/Dubai")))

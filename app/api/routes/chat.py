@@ -14,7 +14,16 @@ def _assistant():
 
 @router.post("/chat", response_model=ChatResponse)
 def chat(payload: ChatRequest) -> ChatResponse:
-    return _assistant().chat(session_id=payload.session_id, user_message=payload.message, user_id=payload.user_id)
+    assistant = _assistant()
+    session = assistant.sessions.get(payload.session_id)
+    session.booking_platform = payload.platform
+    session.whatsapp_phone = payload.user_id if payload.platform == "whatsapp" else None
+    session.whatsapp_name = payload.user_name if payload.platform == "whatsapp" else None
+    if payload.platform == "app" and payload.auth_token:
+        session.jwt_token = payload.auth_token
+    if payload.payment_option:
+        session.payment_option = payload.payment_option
+    return assistant.chat(session_id=payload.session_id, user_message=payload.message, user_id=payload.user_id if payload.platform == "app" else None)
 
 
 @router.post("/debug-rag", response_model=DebugRagResponse)

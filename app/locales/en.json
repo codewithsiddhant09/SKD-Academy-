@@ -1,0 +1,41 @@
+{
+  "booking": {
+    "created": "Booking created successfully",
+    "confirmed": "Booking confirmed",
+    "cancelled": "Booking cancelled successfully",
+    "payment_required": "Payment required to confirm your booking",
+    "payment_confirmed": "Payment confirmed",
+    "payment_timeout": "Payment timeout - booking cancelled",
+    "refund_processing": "Refund is being processed",
+    "cancellation_not_allowed": "Booking cannot be cancelled after the appointment start time"
+  },
+  "payment": {
+    "pay_now": "Pay Now",
+    "pay_at_store": "Pay at Store",
+    "pay_later": "Pay Later",
+    "payment_hold_minutes": "Please complete payment within {{minutes}} minutes",
+    "payment_successful": "Payment successful",
+    "payment_failed": "Payment failed",
+    "refund_successful": "Refund processed successfully",
+    "refund_amount": "Refund amount: AED {{amount}}",
+    "cancellation_fee": "Cancellation fee: AED {{fee}}"
+  },
+  "notifications": {
+    "booking_created": "Your booking has been created",
+    "booking_confirmed": "Your appointment is confirmed",
+    "booking_cancelled": "Your booking has been cancelled",
+    "new_booking_received": "New booking received",
+    "payment_confirmed": "Payment confirmed for booking",
+    "refund_processed": "Refund has been processed"
+  },
+  "errors": {
+    "invalid_payment_option": "Invalid payment option",
+    "payment_link_failed": "Payment link creation failed",
+    "booking_not_found": "Booking not found",
+    "cancellation_failed": "Cancellation failed",
+    "refund_failed": "Refund failed",
+    "vendor_required": "Vendor / Salon is required",
+    "phone_required": "Phone number is required",
+    "invalid_phone": "Invalid phone number format"
+  }
+}

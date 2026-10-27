@@ -82,14 +82,15 @@ Booking rules:
   only named a category (e.g. Lashes) and the salon offers several services in it, ask which one.
   If it reports problems (service not offered, time not available, past date), explain them
   plainly and offer options: another service or time at this salon, or other salons.
-- When update_booking says ready_for_summary, show the summary (service, salon, date and time), then
-  offer exactly two choices: Pay Now or Pay Later. Do not create a new booking until the customer selects one.
-  If no clear choice is present, ask the customer to choose and wait; do not call confirm_booking.
-- Once the customer explicitly chooses, call confirm_booking with payment_option exactly "Pay Now" or
-  "Pay Later". A plain approval of the summary (such as "yes" or "proceed") is not a payment choice;
-  ask them to select one. Never infer a payment choice from context. The API creates the booking for either choice.
-  For Pay Now, show the payment URL returned in the booking's payOption field when present; do not claim
-  payment completed unless the API says so. For Pay Later, do not show a payment URL.
+- When update_booking says ready_for_summary, show the summary and ask for explicit confirmation. In the app channel,
+  offer Pay Now or Pay Later and wait for an explicit choice. Map these to Bookly's PayNow and PayAtStore values.
+  In WhatsApp, default to PayAtStore unless the trusted request supplies an explicit valid payment_option.
+- For a customer booking created through Bookly, call confirm_booking with submit_to_bookly=true only after
+  explicit confirmation and payment selection. For existing request flows, omit this flag and preserve local confirmation behavior.
+- Call confirm_booking only after explicit confirmation and, for app bookings, the explicit payment choice. For PayNow,
+  show Bookly's payment URL when present; never claim payment is complete unless Bookly reports it.
+- For cancellation, retrieve and show the Bookly cancellation quote before asking for explicit confirmation. Only cancel
+  after that confirmation and respect the quote's allowed, cancellation_fee and refund_amount values.
 - For changes to an existing booking request, retain the existing explicit summary confirmation flow and
   do not ask for or change its payment option.
 
@@ -112,7 +113,8 @@ def _intent_from_tools(called: list[str]) -> IntentType:
     """Report what the assistant did this turn (for analytics/debug panels)."""
     if {
         "update_booking", "confirm_booking", "reset_booking", "check_availability", "get_my_bookings",
-        "get_booking_request", "modify_booking_request", "cancel_booking_request",
+        "get_booking_request", "modify_booking_request", "cancel_booking_request", "quote_booking_cancellation",
+        "cancel_bookly_booking",
     } & set(called):
         return IntentType.APPOINTMENT_BOOKING
     if "search_salons" in called:
@@ -201,7 +203,11 @@ class BookingAssistant:
         )
         payment_choice_required = session.awaiting_confirmation and not session.editing_request
         if payment_choice_required:
-            session.payment_option = self._payment_choice(user_message)
+            choice = self._payment_choice(user_message)
+            if session.booking_platform == "whatsapp":
+                session.payment_option = choice or "Pay Later"
+            elif choice:
+                session.payment_option = choice
         called: list[str] = []
         reply = self._converse(session, ctx, user_message, called)
         rid = (ctx.booking_result or {}).get("request_id")

@@ -146,6 +146,8 @@ class TestBookingRequestDocument:
         monkeypatch.setattr(a.bookings, "submit_request", lambda doc: written.append(doc) or "BKLY-09102026-007")
         search_marina(a, sid)
         call(a, sid, "update_booking", **booking("hair smoothing", MARINA_LUXE, FUTURE, "16:00"))
+        a.sessions.get(sid).payment_option = "Pay Later"
+        a.sessions.get(sid).awaiting_confirmation = True
         llm.queue = ["Summary..."]
         a.chat(sid, "ok")
         llm.queue = [[("confirm_booking", {})], "Request submitted."]
