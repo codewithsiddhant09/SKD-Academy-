@@ -166,15 +166,13 @@ class confirm_booking(BaseModel):
     - PayAtStore: Booking is APPROVED right away. Customer pays at salon after service.
     - PayNow: Booking requires payment within 10 minutes. Returns payment link.
     
-    Use this ONLY after showing the summary and getting explicit confirmation with payment choice."""
+    Use this ONLY after showing the summary and getting explicit confirmation with payment choice.
+    
+    Always creates real Bookly booking via API. No salon approval needed."""
 
     payment_option: Literal["Pay Now", "Pay at Store"] | None = Field(
         default=None,
         description="The payment option the customer explicitly chose. Required for new bookings."
-    )
-    submit_to_bookly: bool | None = Field(
-        default=None,
-        description="Set to true to create immediate Bookly booking (new flow). Omit for legacy request flow."
     )
 
 
@@ -580,32 +578,9 @@ def run_confirm_booking(ctx: ToolContext, args: confirm_booking) -> dict:
 
     d, user = session.draft, session.user
     salon = session.known_salons[d.salon_id]
-    if args.submit_to_bookly is not True and session.booking_platform == "app":
-        doc = {
-            "userId": user.user_id if user and user.user_id else session.session_id,
-            "vendorId": d.salon_id,
-            "vendorName": salon.salon_name,
-            "services": [next((offer.id for offer in salon.offers if offer.name.lower() == d.service.lower()), "")],
-            "serviceName": d.service,
-            "categoryName": None,
-            "location": session.location,
-            "bookingType": "Individual",
-            "groupSize": 1,
-            "companions": [],
-            "date": f"{d.date} 00:00:00",
-            "slot": time.fromisoformat(d.time).strftime("%I:%M %p"),
-            "requestedDate": d.date,
-            "requestedTime": d.time,
-            "customer_name": user.full_name if user and user.full_name else "User",
-            "customer_phone": user.phone_number if user and user.phone_number else "",
-        }
-        request_id = ctx.bookings.submit_request(doc)
-        ctx.booking_result = {"request_id": request_id, "status": "pending", "user_id": user.user_id if user else None}
-        session.last_booking_order_id = request_id
-        session.draft = BookingPayload()
-        session.awaiting_confirmation = False
-        session.payment_option = None
-        return {"submitted": True, "request_id": request_id, "status": "pending"}
+    
+    # Always use Bookly API for immediate booking (new flow)
+    # Old local request flow is deprecated
     offer = next((o for o in salon.offers if o.name.lower() == d.service.lower()), None)
     if session.editing_request:
         return _save_modification(ctx, offer)

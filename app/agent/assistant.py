@@ -86,8 +86,8 @@ Booking rules:
   Offer "Pay Now" (online payment before appointment) or "Pay at Store" (pay at salon after service).
   IMPORTANT: Always create the booking immediately after payment selection - there is NO salon approval step.
   PayAtStore bookings are APPROVED immediately. PayNow bookings require payment within 10 minutes.
-- Call confirm_booking with submit_to_bookly=true after explicit confirmation and payment choice.
-  The booking is created immediately - do NOT say "salon will review" or "waiting for approval".
+- Call confirm_booking after explicit confirmation and payment choice.
+  The booking is created immediately via Bookly API - do NOT say "salon will review" or "waiting for approval".
 - For PayNow: The response includes a payment link. Tell customer to complete payment within 10 minutes
   or the booking will be automatically cancelled. Show the payment link clearly.
 - For PayAtStore: The booking is APPROVED immediately. Tell customer their appointment is confirmed and
