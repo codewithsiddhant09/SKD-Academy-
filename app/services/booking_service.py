@@ -11,7 +11,6 @@ from app.core.logging import get_logger
 from app.models.schemas import BookingPayload, BookingResponse
 from app.repositories.booking_repository import BookingRepository
 from app.utils.booking_payment import (
-    create_ziina_payment_intent_sync,
     determine_pay_option,
     calculate_booking_status,
     calculate_booking_amounts,
@@ -153,28 +152,41 @@ class BookingService:
         if not isinstance(booking, dict) or not booking.get("_id") or not booking.get("orderId"):
             raise RuntimeError("Booking API response did not contain both booking _id and orderId.")
         
-        # If PayNow, create Ziina payment link
+        # If PayNow, call separate payNowBooking endpoint to create payment link
         if pay_option == "PayNow":
             try:
-                payment_intent = create_ziina_payment_intent_sync(
-                    booking_id=booking["orderId"],
-                    amount_aed=booking.get("finalAmount", 0),
-                    description=f"Booking {booking['orderId']}",
-                    customer_email=payload.get("email"),
-                    customer_phone=payload.get("phoneNumber")
-                )
+                booking_id = booking.get("_id")
+                paynow_payload = {
+                    "bookingId": booking_id,
+                    "returnTo": "web"  # or "app" depending on platform
+                }
                 
-                # Add payment info to result
-                booking["paymentId"] = payment_intent["id"]
-                booking["paymentUrl"] = payment_intent["url"]
-                booking["paymentRequired"] = True
-                booking["paymentHoldMinutes"] = settings.payment_hold_minutes
+                # Call payNowBooking endpoint
+                with httpx.Client(timeout=settings.booking_api_timeout_seconds, verify=settings.booking_api_verify_ssl) as client:
+                    paynow_response = client.post(
+                        settings.booking_paynow_api_url,
+                        json=paynow_payload,
+                        headers=auth_headers or {}
+                    )
+                    paynow_response.raise_for_status()
+                    paynow_result = paynow_response.json()
                 
+                # Extract payment URL from response
+                if isinstance(paynow_result, dict) and not paynow_result.get("error"):
+                    payment_data = paynow_result.get("results") or paynow_result
+                    if isinstance(payment_data, dict):
+                        booking["paymentUrl"] = payment_data.get("paymentUrl") or payment_data.get("payment_url")
+                        booking["paymentId"] = payment_data.get("paymentId") or payment_data.get("payment_id")
+                        booking["paymentRequired"] = True
+                        booking["paymentHoldMinutes"] = settings.payment_hold_minutes
+                
+            except httpx.HTTPStatusError as exc:
+                logger.error(f"PayNow API failed: {exc.response.status_code} - {exc.response.text}")
+                # Don't fail the booking - it's already created
+                booking["paymentError"] = f"Payment link creation failed: {exc.response.text[:200]}"
             except Exception as e:
-                # Payment link creation failed - cancel the booking
-                logger.error(f"Payment link creation failed for {booking['orderId']}: {e}")
-                # Note: In production, you would cancel the booking here
-                raise RuntimeError("Payment link creation failed")
+                logger.error(f"PayNow endpoint error: {e}")
+                booking["paymentError"] = str(e)
         
         return result
 
