@@ -11,7 +11,7 @@ from app.core.logging import get_logger
 from app.models.schemas import BookingPayload, BookingResponse
 from app.repositories.booking_repository import BookingRepository
 from app.utils.booking_payment import (
-    create_ziina_payment_intent,
+    create_ziina_payment_intent_sync,
     determine_pay_option,
     calculate_booking_status,
     calculate_booking_amounts,
@@ -81,7 +81,7 @@ class BookingService:
     def vat_percentage(self) -> float:
         return float(get_settings().booking_vat_percentage)
 
-    async def create_external_booking(
+    def create_external_booking(
         self, payload: dict[str, Any], auth_headers: dict[str, str] | None = None
     ) -> dict[str, Any]:
         """
@@ -156,7 +156,7 @@ class BookingService:
         # If PayNow, create Ziina payment link
         if pay_option == "PayNow":
             try:
-                payment_intent = await create_ziina_payment_intent(
+                payment_intent = create_ziina_payment_intent_sync(
                     booking_id=booking["orderId"],
                     amount_aed=booking.get("finalAmount", 0),
                     description=f"Booking {booking['orderId']}",

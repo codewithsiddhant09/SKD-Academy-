@@ -146,6 +146,84 @@ def calculate_commission(
     return commission, net
 
 
+def create_ziina_payment_intent_sync(
+    booking_id: str,
+    amount_aed: float,
+    description: str,
+    customer_email: str | None = None,
+    customer_phone: str | None = None
+) -> dict[str, Any]:
+    """
+    Create a Ziina payment intent for online payment (synchronous version).
+    
+    Args:
+        booking_id: Booking ID for reference
+        amount_aed: Amount in AED
+        description: Payment description
+        customer_email: Customer email (optional)
+        customer_phone: Customer phone (optional)
+    
+    Returns:
+        Dict with id, url, status
+    
+    Raises:
+        RuntimeError: If Ziina API call fails
+    """
+    if not ZIINA_API_KEY:
+        raise RuntimeError("ZIINA_API_KEY is not configured")
+    
+    # Convert AED to fils (1 AED = 100 fils)
+    amount_fils = int(amount_aed * 100)
+    
+    # Build return URL
+    return_url = f"{PAYMENT_RESULT_BASE_URL}?orderId={booking_id}"
+    
+    payload = {
+        "amount": amount_fils,
+        "currency": "AED",
+        "description": description,
+        "return_url": return_url,
+        "metadata": {
+            "booking_id": booking_id,
+            "test_mode": ZIINA_TEST_MODE
+        }
+    }
+    
+    if customer_email:
+        payload["customer_email"] = customer_email
+    if customer_phone:
+        payload["customer_phone"] = customer_phone
+    
+    headers = {
+        "Authorization": f"Bearer {ZIINA_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    
+    try:
+        with httpx.Client(timeout=15.0) as client:
+            response = client.post(
+                f"{ZIINA_BASE_URL}/payment_intents",
+                json=payload,
+                headers=headers
+            )
+            response.raise_for_status()
+            result = response.json()
+            
+            return {
+                "id": result.get("id"),
+                "url": result.get("url"),
+                "status": result.get("status"),
+                "amount": amount_aed
+            }
+            
+    except httpx.HTTPStatusError as e:
+        logger.error(f"Ziina API error: {e.response.status_code} - {e.response.text}")
+        raise RuntimeError(f"Payment link creation failed: {e.response.text}")
+    except Exception as e:
+        logger.error(f"Error creating Ziina payment intent: {e}")
+        raise RuntimeError(f"Payment link creation failed: {str(e)}")
+
+
 async def create_ziina_payment_intent(
     booking_id: str,
     amount_aed: float,
@@ -154,7 +232,7 @@ async def create_ziina_payment_intent(
     customer_phone: str | None = None
 ) -> dict[str, Any]:
     """
-    Create a Ziina payment intent for online payment.
+    Create a Ziina payment intent for online payment (async version).
     
     Args:
         booking_id: Booking ID for reference
