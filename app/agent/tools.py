@@ -160,10 +160,22 @@ class get_my_bookings(BaseModel):
 
 
 class confirm_booking(BaseModel):
-    """Creates the Bookly booking, or confirms a chatbot request in local mode."""
+    """Creates the Bookly booking immediately with the selected payment option.
+    
+    IMPORTANT: The booking is created IMMEDIATELY - there is NO salon approval step.
+    - PayAtStore: Booking is APPROVED right away. Customer pays at salon after service.
+    - PayNow: Booking requires payment within 10 minutes. Returns payment link.
+    
+    Use this ONLY after showing the summary and getting explicit confirmation with payment choice."""
 
-    payment_option: Literal["Pay Now", "Pay Later"] | None = Field(default=None)
-    submit_to_bookly: bool | None = None
+    payment_option: Literal["Pay Now", "Pay at Store"] | None = Field(
+        default=None,
+        description="The payment option the customer explicitly chose. Required for new bookings."
+    )
+    submit_to_bookly: bool | None = Field(
+        default=None,
+        description="Set to true to create immediate Bookly booking (new flow). Omit for legacy request flow."
+    )
 
 
 class quote_booking_cancellation(BaseModel):
@@ -548,15 +560,15 @@ def run_confirm_booking(ctx: ToolContext, args: confirm_booking) -> dict:
     if session.editing_request:
         payment_option = None
     elif session.booking_platform == "whatsapp":
-        payment_option = session.payment_option or "Pay Later"
+        payment_option = session.payment_option or "Pay at Store"
         if args.payment_option not in {None, payment_option}:
             return {"error": "Use only the payment option the customer selected.", **view}
     else:
         payment_option = session.payment_option
-        if payment_option not in {"Pay Now", "Pay Later"}:
+        if payment_option not in {"Pay Now", "Pay at Store"}:
             if not payment_option:
-                return {"error": "Ask the customer to choose Pay Now or Pay Later before creating the booking.", **view}
-            return {"error": "Invalid payment option. Choose Pay Now or Pay Later.", **view}
+                return {"error": "Ask the customer to choose 'Pay Now' or 'Pay at Store' before creating the booking.", **view}
+            return {"error": "Invalid payment option. Must be 'Pay Now' or 'Pay at Store'.", **view}
         if args.payment_option is not None and args.payment_option != payment_option:
             return {"error": "Use only the payment option the customer explicitly selected in their latest message.", **view}
     api_payment_option = ("PayNow" if payment_option == "Pay Now" else "PayAtStore") if payment_option else None
@@ -695,11 +707,35 @@ def run_confirm_booking(ctx: ToolContext, args: confirm_booking) -> dict:
         "booking_status": booking.get("bookingStatus", "Pending"),
         "payment_status": booking.get("paymentStatus", "Pending"),
         "payment_option": payment_option,
-        "tell_customer": f"Your booking was created with order ID {request_id}. Its current status is {booking.get('bookingStatus', 'Pending')}; payment status is {booking.get('paymentStatus', 'Pending')}.",
     }
-    if payment_url:
-        result["payment_url"] = payment_url
-        result["tell_customer"] += " Complete your payment using the payment link returned by Bookly."
+    
+    # Construct appropriate message based on payment option
+    if payment_option == "Pay Now":
+        if payment_url:
+            result["payment_url"] = payment_url
+            result["tell_customer"] = (
+                f"Your booking is confirmed with order ID {request_id}! "
+                f"Please complete your payment within 10 minutes using the payment link. "
+                f"If payment is not completed, the booking will be automatically cancelled."
+            )
+        else:
+            result["tell_customer"] = (
+                f"Your booking was created with order ID {request_id}. "
+                f"Status: {booking.get('bookingStatus', 'Pending')}. "
+                f"Please complete payment to confirm."
+            )
+    elif payment_option == "Pay at Store":
+        result["tell_customer"] = (
+            f"Your appointment is CONFIRMED with order ID {request_id}! "
+            f"Your booking at {salon.salon_name} for {d.service} on {d.date} at {d.time} is approved. "
+            f"You will pay at the salon after your service is complete."
+        )
+    else:
+        result["tell_customer"] = (
+            f"Your booking was created with order ID {request_id}. "
+            f"Status: {booking.get('bookingStatus', 'Pending')}."
+        )
+    
     return result
 
 

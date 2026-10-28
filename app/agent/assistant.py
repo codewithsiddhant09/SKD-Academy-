@@ -82,17 +82,19 @@ Booking rules:
   only named a category (e.g. Lashes) and the salon offers several services in it, ask which one.
   If it reports problems (service not offered, time not available, past date), explain them
   plainly and offer options: another service or time at this salon, or other salons.
-- When update_booking says ready_for_summary, show the summary and ask for explicit confirmation. In the app channel,
-  offer Pay Now or Pay Later and wait for an explicit choice. Map these to Bookly's PayNow and PayAtStore values.
-  In WhatsApp, default to PayAtStore unless the trusted request supplies an explicit valid payment_option.
-- For a customer booking created through Bookly, call confirm_booking with submit_to_bookly=true only after
-  explicit confirmation and payment selection. For existing request flows, omit this flag and preserve local confirmation behavior.
-- Call confirm_booking only after explicit confirmation and, for app bookings, the explicit payment choice. For PayNow,
-  show Bookly's payment URL when present; never claim payment is complete unless Bookly reports it.
-- For cancellation, retrieve and show the Bookly cancellation quote before asking for explicit confirmation. Only cancel
-  after that confirmation and respect the quote's allowed, cancellation_fee and refund_amount values.
-- For changes to an existing booking request, retain the existing explicit summary confirmation flow and
-  do not ask for or change its payment option.
+- When update_booking says ready_for_summary, show the summary and ask for payment option selection.
+  Offer "Pay Now" (online payment before appointment) or "Pay at Store" (pay at salon after service).
+  IMPORTANT: Always create the booking immediately after payment selection - there is NO salon approval step.
+  PayAtStore bookings are APPROVED immediately. PayNow bookings require payment within 10 minutes.
+- Call confirm_booking with submit_to_bookly=true after explicit confirmation and payment choice.
+  The booking is created immediately - do NOT say "salon will review" or "waiting for approval".
+- For PayNow: The response includes a payment link. Tell customer to complete payment within 10 minutes
+  or the booking will be automatically cancelled. Show the payment link clearly.
+- For PayAtStore: The booking is APPROVED immediately. Tell customer their appointment is confirmed and
+  they will pay at the salon after the service is complete.
+- For cancellation, retrieve and show the Bookly cancellation quote (including any fees) before asking 
+  for confirmation. Only cancel after explicit confirmation. Mention the refund amount if applicable.
+- WhatsApp bookings: Use PayAtStore as default. PayNow is available if explicitly requested.
 
 Existing booking requests (IDs like BKLY-09102026-004):
 - When the customer gives a request ID or asks about an existing request, call get_booking_request and
@@ -296,13 +298,13 @@ class BookingAssistant:
 
     @staticmethod
     def _payment_choice(message: str) -> str | None:
-        """Recognize only an explicit Pay Now or Pay Later selection."""
+        """Recognize only an explicit Pay Now or Pay at Store selection."""
         normalized = " ".join(message.lower().replace("-", " ").split())
-        pay_now = any(phrase in normalized for phrase in ("pay now", "pay immediately", "pay upfront"))
-        pay_later = any(phrase in normalized for phrase in ("pay later", "pay afterward", "pay afterwards"))
-        if pay_now == pay_later:
+        pay_now = any(phrase in normalized for phrase in ("pay now", "pay immediately", "pay upfront", "pay online", "online payment"))
+        pay_at_store = any(phrase in normalized for phrase in ("pay later", "pay at store", "pay at salon", "pay after", "pay afterwards"))
+        if pay_now == pay_at_store:
             return None
-        return "Pay Now" if pay_now else "Pay Later"
+        return "Pay Now" if pay_now else "Pay at Store"
 
     @staticmethod
     def _cards(session: Session, salon_ids: list[str], notes: dict[str, str]) -> list[SalonRecommendation]:
