@@ -661,7 +661,7 @@ def run_confirm_booking(ctx: ToolContext, args: confirm_booking) -> dict:
     city = value("city", profile.city if profile else None)
     zip_code = value("zip_code", profile.zip_code if profile else None)
     latitude = value("latitude", profile.latitude if profile else None)
-    longitude = value("longitude", profile else None)
+    longitude = value("longitude", profile.longitude if profile else None)
     
     # Check if this is a home service booking
     booking_appointment_type = contact.get("booking_appointment", "Salon")
