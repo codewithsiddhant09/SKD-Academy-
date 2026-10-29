@@ -629,6 +629,9 @@ def run_set_appointment_location(ctx: ToolContext, args: set_appointment_locatio
 def run_save_booking_contact(ctx: ToolContext, args: save_booking_contact) -> dict:
     """Save customer contact information in the session."""
     session = ctx.session
+    logger.info("=== SAVE_BOOKING_CONTACT CALLED ===")
+    logger.info("Args: address=%s, city=%s, zip_code=%s, contact_name=%s, email=%s, phone=%s, country_code=%s", 
+               args.address, args.city, args.zip_code, args.contact_name, args.email, args.phone_number, args.country_code)
     
     if not session.booking_contact:
         session.booking_contact = {}
@@ -656,6 +659,9 @@ def run_save_booking_contact(ctx: ToolContext, args: save_booking_contact) -> di
     if args.country_code is not None:
         updates["country_code"] = args.country_code
         session.booking_contact["country_code"] = args.country_code
+    
+    logger.info("SAVED contact fields: %s", list(updates.keys()))
+    logger.info("Session booking_contact after save: %s", session.booking_contact)
     
     return {
         "success": True,
@@ -694,8 +700,15 @@ def run_set_booking_type(ctx: ToolContext, args: set_booking_type) -> dict:
 
 def run_confirm_booking(ctx: ToolContext, args: confirm_booking) -> dict:
     session = ctx.session
+    logger.info("=== CONFIRM_BOOKING CALLED ===")
+    logger.info("Session booking_contact: %s", session.booking_contact)
+    logger.info("Session booking_type: %s", session.booking_type)
+    logger.info("Session payment_option: %s", session.payment_option)
+    logger.info("Session booking_platform: %s", session.booking_platform)
+    
     view = _draft_view(ctx)
     if not view["ready_for_summary"]:
+        logger.warning("BOOKING_INCOMPLETE: missing %s", view['missing'])
         return {"error": f"Booking incomplete, missing: {', '.join(view['missing'])}.", **view}
     if not session.awaiting_confirmation:
         return {"error": "Show the customer the full booking summary and get their explicit confirmation first.", **view}
@@ -789,7 +802,10 @@ def run_confirm_booking(ctx: ToolContext, args: confirm_booking) -> dict:
     
     missing_contact = [label for label, item in required.items() if item is None or item == ""]
     if missing_contact:
-        return {"error": "Before submitting, please provide: " + ", ".join(missing_contact) + ". Save these using PATCH /session/{session_id}/booking-contact, then explicitly confirm the booking again."}
+        logger.warning("MISSING_CONTACT_INFO: %s", missing_contact)
+        logger.info("Contact values: name=%s, email=%s, country_code=%s, phone=%s, address=%s, city=%s, zip=%s", 
+                   contact_name, email, country_code, phone, address, city, zip_code)
+        return {"error": "Before submitting, please provide: " + ", ".join(missing_contact) + ". Save these using save_booking_contact tool, then explicitly confirm the booking again."}
     if not offer or not offer.id or offer.id.startswith("mock-"):
         return {"error": "The selected service has no real Bookly service ID, so the booking cannot be submitted."}
     
@@ -820,6 +836,8 @@ def run_confirm_booking(ctx: ToolContext, args: confirm_booking) -> dict:
         **({"location": {"type": "Point", "coordinates": [float(longitude), float(latitude)]}} if latitude is not None and longitude is not None else {}),
         "additionalNote": contact.get("additional_note"),
     }
+    logger.info("BOOKING_PAYLOAD: %s", booking_payload)
+    
     try:
         if session.booking_platform == "whatsapp":
             secret = get_settings().whatsapp_booking_secret

@@ -97,11 +97,23 @@ Booking rules:
   Offer "Pay Now" (online payment before appointment) or "Pay at Store" (pay at salon after service).
   
   After payment option is selected, collect contact information:
-  - For Salon Visit: name, email, phone, country code, address
-  - For Home Service: name, email, phone, country code, address, city, zip code
+  - For BOTH Salon Visit and Home Service, ALWAYS ask for and save:
+    * Full name
+    * Email address
+    * Phone number with country code (e.g., +971 for UAE)
+    * Address
+  - For Home Service ONLY, also ask for:
+    * City
+    * Zip code / Postal code
   
-  When customer provides contact details in the conversation, immediately call save_booking_contact
-  to save them before calling confirm_booking. Extract address, city, zip code from what customer said.
+  When customer provides contact details in the conversation:
+  1. Parse all information from their message (name, email, phone, country code, address, city, zip)
+  2. Immediately call save_booking_contact with ALL provided information
+  3. Check which fields are still missing
+  4. Ask for any missing required fields
+  5. Only call confirm_booking after ALL required fields are collected
+  
+  IMPORTANT: Do NOT assume contact info from user profile. Always ask explicitly if not provided.
   
   IMPORTANT: Always create the booking immediately after payment selection - there is NO salon approval step.
   PayAtStore bookings are APPROVED immediately. PayNow bookings require payment within 10 minutes.
