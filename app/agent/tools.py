@@ -159,6 +159,42 @@ class get_my_bookings(BaseModel):
     service: str | None = Field(description="Only bookings that include this service, e.g. 'haircut'. Null for all.")
 
 
+class set_appointment_location(BaseModel):
+    """Sets where the appointment will take place (Salon or Home).
+    
+    WHEN TO USE:
+    - After showing booking summary, FIRST ask about appointment location
+    - Ask: "Would you like to visit the salon or have the service at your home?"
+    
+    OPTIONS:
+    - "Salon" / "Walk-In": Customer visits the salon (BookingAppointment: "Salon")
+    - "Home" / "Home Visit": Service provider visits customer's home (BookingAppointment: "Home")
+    
+    Call this BEFORE asking for Individual/Group booking type."""
+
+    appointment_location: Literal["Salon", "Home"] = Field(
+        description="'Salon' for visit salon (walk-in), 'Home' for home service visit"
+    )
+
+
+class save_booking_contact(BaseModel):
+    """Saves customer contact information for the booking.
+    
+    WHEN TO USE:
+    - When customer provides their contact details (address, city, zip code, etc.)
+    - Before calling confirm_booking, save all provided contact information
+    
+    Call this whenever the customer provides contact details in the conversation."""
+
+    address: str | None = Field(default=None, description="Full street address")
+    city: str | None = Field(default=None, description="City name")
+    zip_code: str | None = Field(default=None, description="Zip code / postal code")
+    contact_name: str | None = Field(default=None, description="Full name")
+    email: str | None = Field(default=None, description="Email address")
+    phone_number: str | None = Field(default=None, description="Phone number without country code")
+    country_code: str | None = Field(default=None, description="Country code e.g. +971")
+
+
 class set_booking_type(BaseModel):
     """Sets the booking type (Individual or Group) and group size if applicable.
     
@@ -564,6 +600,67 @@ def run_get_my_bookings(ctx: ToolContext, args: get_my_bookings) -> dict:
         "pending_requests": history["requests"],
         # only salons that are still active and approved can be recommended
         "recommended_salon": recommend_from_history([b for b in bookings if b["salon_id"] in bookable]),
+    }
+
+
+def run_set_appointment_location(ctx: ToolContext, args: set_appointment_location) -> dict:
+    """Set the appointment location (Salon or Home) for the current booking."""
+    session = ctx.session
+    
+    # Store in booking_contact as "booking_appointment"
+    if not session.booking_contact:
+        session.booking_contact = {}
+    
+    session.booking_contact["booking_appointment"] = args.appointment_location
+    
+    result = {
+        "success": True,
+        "appointment_location": args.appointment_location,
+    }
+    
+    if args.appointment_location == "Home":
+        result["message"] = "Appointment set for Home Visit. Service will be provided at your location. Now ask if they want Individual or Group booking."
+    else:
+        result["message"] = "Appointment set at Salon. Customer will visit the salon. Now ask if they want Individual or Group booking."
+    
+    return result
+
+
+def run_save_booking_contact(ctx: ToolContext, args: save_booking_contact) -> dict:
+    """Save customer contact information in the session."""
+    session = ctx.session
+    
+    if not session.booking_contact:
+        session.booking_contact = {}
+    
+    # Update only the fields that were provided
+    updates = {}
+    if args.address is not None:
+        updates["address"] = args.address
+        session.booking_contact["address"] = args.address
+    if args.city is not None:
+        updates["city"] = args.city
+        session.booking_contact["city"] = args.city
+    if args.zip_code is not None:
+        updates["zip_code"] = args.zip_code
+        session.booking_contact["zip_code"] = args.zip_code
+    if args.contact_name is not None:
+        updates["contact_name"] = args.contact_name
+        session.booking_contact["contact_name"] = args.contact_name
+    if args.email is not None:
+        updates["email"] = args.email
+        session.booking_contact["email"] = args.email
+    if args.phone_number is not None:
+        updates["phone_number"] = args.phone_number
+        session.booking_contact["phone_number"] = args.phone_number
+    if args.country_code is not None:
+        updates["country_code"] = args.country_code
+        session.booking_contact["country_code"] = args.country_code
+    
+    return {
+        "success": True,
+        "saved": list(updates.keys()),
+        "message": f"Contact information saved: {', '.join(updates.keys())}. Now proceed to confirm the booking."
     }
 
 
@@ -1019,7 +1116,9 @@ TOOLS: dict[str, tuple[type[BaseModel], ToolHandler]] = {
     "check_availability": (check_availability, run_check_availability),
     "get_my_bookings": (get_my_bookings, run_get_my_bookings),
     "update_booking": (update_booking, run_update_booking),
+    "set_appointment_location": (set_appointment_location, run_set_appointment_location),
     "set_booking_type": (set_booking_type, run_set_booking_type),
+    "save_booking_contact": (save_booking_contact, run_save_booking_contact),
     "confirm_booking": (confirm_booking, run_confirm_booking),
     "quote_booking_cancellation": (quote_booking_cancellation, run_quote_booking_cancellation),
     "cancel_bookly_booking": (cancel_bookly_booking, run_cancel_bookly_booking),

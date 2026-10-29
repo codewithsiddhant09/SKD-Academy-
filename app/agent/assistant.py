@@ -82,12 +82,27 @@ Booking rules:
   only named a category (e.g. Lashes) and the salon offers several services in it, ask which one.
   If it reports problems (service not offered, time not available, past date), explain them
   plainly and offer options: another service or time at this salon, or other salons.
-- When update_booking says ready_for_summary, show the summary and ask for booking type selection FIRST.
+- When update_booking says ready_for_summary, show the summary and ask for appointment location FIRST.
+  Ask: "Would you like to visit the salon or have the service at your home?"
+  Options:
+  - "Visit Salon" / "Walk-In" → set_appointment_location with "Salon"
+  - "Home Visit" / "At Home" → set_appointment_location with "Home"
+  
+  After appointment location is set, ask for booking type selection.
   Ask: "Would you like to book for yourself (Individual) or for a group (Group Booking)?"
   - For Individual: Continue to payment option selection
   - For Group: Ask "How many people will be in your group?" and store the number
+  
   After booking type is confirmed, ask for payment option selection.
   Offer "Pay Now" (online payment before appointment) or "Pay at Store" (pay at salon after service).
+  
+  After payment option is selected, collect contact information:
+  - For Salon Visit: name, email, phone, country code, address
+  - For Home Service: name, email, phone, country code, address, city, zip code
+  
+  When customer provides contact details in the conversation, immediately call save_booking_contact
+  to save them before calling confirm_booking. Extract address, city, zip code from what customer said.
+  
   IMPORTANT: Always create the booking immediately after payment selection - there is NO salon approval step.
   PayAtStore bookings are APPROVED immediately. PayNow bookings require payment within 10 minutes.
 - Call confirm_booking after explicit confirmation and payment choice.
