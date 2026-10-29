@@ -82,7 +82,11 @@ Booking rules:
   only named a category (e.g. Lashes) and the salon offers several services in it, ask which one.
   If it reports problems (service not offered, time not available, past date), explain them
   plainly and offer options: another service or time at this salon, or other salons.
-- When update_booking says ready_for_summary, show the summary and ask for payment option selection.
+- When update_booking says ready_for_summary, show the summary and ask for booking type selection FIRST.
+  Ask: "Would you like to book for yourself (Individual) or for a group (Group Booking)?"
+  - For Individual: Continue to payment option selection
+  - For Group: Ask "How many people will be in your group?" and store the number
+  After booking type is confirmed, ask for payment option selection.
   Offer "Pay Now" (online payment before appointment) or "Pay at Store" (pay at salon after service).
   IMPORTANT: Always create the booking immediately after payment selection - there is NO salon approval step.
   PayAtStore bookings are APPROVED immediately. PayNow bookings require payment within 10 minutes.

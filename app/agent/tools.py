@@ -159,6 +159,25 @@ class get_my_bookings(BaseModel):
     service: str | None = Field(description="Only bookings that include this service, e.g. 'haircut'. Null for all.")
 
 
+class set_booking_type(BaseModel):
+    """Sets the booking type (Individual or Group) and group size if applicable.
+    
+    WHEN TO USE:
+    - After showing booking summary, ask if booking is for Individual or Group
+    - For Individual: Just set booking_type to "Individual"
+    - For Group: Set booking_type to "Group" and ask for group_size
+    
+    Call this BEFORE asking for payment option."""
+
+    booking_type: Literal["Individual", "Group"] = Field(
+        description="Individual (booking for one person) or Group (multiple people)"
+    )
+    group_size: int | None = Field(
+        default=None,
+        description="Required for Group bookings. Number of people in the group (minimum 2)."
+    )
+
+
 class confirm_booking(BaseModel):
     """Creates the Bookly booking immediately with the selected payment option.
     
@@ -548,6 +567,34 @@ def run_get_my_bookings(ctx: ToolContext, args: get_my_bookings) -> dict:
     }
 
 
+def run_set_booking_type(ctx: ToolContext, args: set_booking_type) -> dict:
+    """Set the booking type (Individual or Group) for the current booking."""
+    session = ctx.session
+    
+    # Validate group size for group bookings
+    if args.booking_type == "Group":
+        if not args.group_size or args.group_size < 2:
+            return {"error": "Group bookings require at least 2 people. Ask the customer how many people will be in their group."}
+        session.group_size = args.group_size
+    else:
+        session.group_size = None
+    
+    session.booking_type = args.booking_type
+    
+    result = {
+        "success": True,
+        "booking_type": args.booking_type,
+    }
+    
+    if args.booking_type == "Group":
+        result["group_size"] = args.group_size
+        result["message"] = f"Booking type set to Group for {args.group_size} people. Now ask for payment option."
+    else:
+        result["message"] = "Booking type set to Individual. Now ask for payment option."
+    
+    return result
+
+
 def run_confirm_booking(ctx: ToolContext, args: confirm_booking) -> dict:
     session = ctx.session
     view = _draft_view(ctx)
@@ -555,6 +602,20 @@ def run_confirm_booking(ctx: ToolContext, args: confirm_booking) -> dict:
         return {"error": f"Booking incomplete, missing: {', '.join(view['missing'])}.", **view}
     if not session.awaiting_confirmation:
         return {"error": "Show the customer the full booking summary and get their explicit confirmation first.", **view}
+    
+    # Check booking type selection
+    if session.booking_platform == "app" and not session.editing_request:
+        booking_type = session.booking_type
+        if booking_type not in {"Individual", "Group"}:
+            if not booking_type:
+                return {"error": "Ask the customer to choose 'Individual' or 'Group Booking' before creating the booking.", **view}
+            return {"error": "Invalid booking type. Must be 'Individual' or 'Group'.", **view}
+        
+        # For group bookings, require group size
+        if booking_type == "Group":
+            if not session.group_size or session.group_size < 2:
+                return {"error": "For Group bookings, ask how many people will be in the group (minimum 2).", **view}
+    
     if session.editing_request:
         payment_option = None
     elif session.booking_platform == "whatsapp":
@@ -600,27 +661,54 @@ def run_confirm_booking(ctx: ToolContext, args: confirm_booking) -> dict:
     city = value("city", profile.city if profile else None)
     zip_code = value("zip_code", profile.zip_code if profile else None)
     latitude = value("latitude", profile.latitude if profile else None)
-    longitude = value("longitude", profile.longitude if profile else None)
-    required = {
-        **({"contact name": contact_name, "email": email, "country code": country_code, "phone number": phone,
-            "address": address, "city": city, "zip code": zip_code, "latitude": latitude,
-            "longitude": longitude} if user and session.booking_platform == "app" else {}),
-        **({"contact name": contact_name, "phone number": session.whatsapp_phone or phone}
-            if session.booking_platform == "whatsapp" else {}),
-    }
+    longitude = value("longitude", profile else None)
+    
+    # Check if this is a home service booking
+    booking_appointment_type = contact.get("booking_appointment", "Salon")
+    is_home_service = booking_appointment_type == "Home"
+    
+    # Build required fields based on platform and booking type
+    if session.booking_platform == "whatsapp":
+        required = {"contact name": contact_name, "phone number": session.whatsapp_phone or phone}
+    elif user and session.booking_platform == "app":
+        # For app bookings: always require basic info + address
+        required = {
+            "contact name": contact_name,
+            "email": email,
+            "country code": country_code,
+            "phone number": phone,
+            "address": address,  # Always required for app bookings
+        }
+        # For home service: also require city, zip code, and location coordinates
+        if is_home_service:
+            required.update({
+                "city": city,
+                "zip code": zip_code,
+                "latitude": latitude,
+                "longitude": longitude,
+            })
+    else:
+        required = {}
+    
     missing_contact = [label for label, item in required.items() if item is None or item == ""]
     if missing_contact:
         return {"error": "Before submitting, please provide: " + ", ".join(missing_contact) + ". Save these using PATCH /session/{session_id}/booking-contact, then explicitly confirm the booking again."}
     if not offer or not offer.id or offer.id.startswith("mock-"):
         return {"error": "The selected service has no real Bookly service ID, so the booking cannot be submitted."}
+    
+    # Determine booking type
+    booking_type = session.booking_type or "Individual"
+    group_size = session.group_size if booking_type == "Group" else 1
+    
     booking_payload = {
         "vendorId": salon.vendor_id,
         "serviceId": [offer.id],
         "payOption": api_payment_option,
-        "bookingType": "Individual",
+        "bookingType": booking_type,
+        "groupSize": group_size,
         "date": d.date,
         "slot": time.fromisoformat(d.time).strftime("%I:%M %p"),
-        "BookingAppointment": contact.get("booking_appointment", "Home"),
+        "BookingAppointment": contact.get("booking_appointment", "Salon"),
         **({"mode": "whatsapp"} if session.booking_platform == "whatsapp" else {}),
         "contactName": contact_name,
         **({"email": email} if email else {}),
@@ -931,6 +1019,7 @@ TOOLS: dict[str, tuple[type[BaseModel], ToolHandler]] = {
     "check_availability": (check_availability, run_check_availability),
     "get_my_bookings": (get_my_bookings, run_get_my_bookings),
     "update_booking": (update_booking, run_update_booking),
+    "set_booking_type": (set_booking_type, run_set_booking_type),
     "confirm_booking": (confirm_booking, run_confirm_booking),
     "quote_booking_cancellation": (quote_booking_cancellation, run_quote_booking_cancellation),
     "cancel_bookly_booking": (cancel_bookly_booking, run_cancel_bookly_booking),

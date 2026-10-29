@@ -35,6 +35,10 @@ class Session:
     awaiting_confirmation: bool = False
     # Set only from a customer's explicit choice after they saw the summary.
     payment_option: str | None = None
+    # Booking type: "Individual" (default) or "Group"
+    booking_type: str | None = None
+    # For group bookings: number of people
+    group_size: int | None = None
     booking_channel: str = "app"
     cancellation_quote: dict | None = None
     # Counts customer messages; used to require that a request was shown before it is cancelled.
