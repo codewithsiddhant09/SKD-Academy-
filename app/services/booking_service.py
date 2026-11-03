@@ -130,17 +130,30 @@ class BookingService:
         payload["bookingStatus"] = booking_status
         
         # Make the API call
+        # Prepare headers - backend expects x-auth-token-user
+        request_headers = {}
+        if auth_headers:
+            # Copy all headers
+            request_headers.update(auth_headers)
+            
+            # Ensure token is in x-auth-token-user (backend expects this)
+            token = auth_headers.get("x-auth-token-user") or auth_headers.get("x-auth-token")
+            if token:
+                request_headers["x-auth-token-user"] = token
+                # Also try standard Authorization header as fallback
+                request_headers["Authorization"] = f"Bearer {token}"
+        
         logger.info("=" * 80)
         logger.info("🚀 CALLING BOOKING API")
         logger.info("=" * 80)
         logger.info("📍 URL: %s", settings.booking_create_api_url)
         logger.info("📦 PAYLOAD: %s", payload)
         logger.info("🔐 AUTH HEADERS PROVIDED: %s", bool(auth_headers))
-        if auth_headers:
-            logger.info("🔑 AUTH HEADERS KEYS: %s", list(auth_headers.keys()))
-            for key, value in auth_headers.items():
-                if key == "x-auth-token" and value:
-                    logger.info("   %s: %s... (length=%d)", key, value[:20] if len(value) > 20 else value, len(value))
+        if request_headers:
+            logger.info("🔑 FINAL HEADERS KEYS: %s", list(request_headers.keys()))
+            for key, value in request_headers.items():
+                if "token" in key.lower() or key == "Authorization":
+                    logger.info("   %s: %s... (length=%d)", key, value[:30] if len(value) > 30 else value, len(value))
                 else:
                     logger.info("   %s: %s", key, value)
         else:
@@ -149,7 +162,7 @@ class BookingService:
         
         try:
             with httpx.Client(timeout=settings.booking_api_timeout_seconds, verify=settings.booking_api_verify_ssl) as client:
-                response = client.post(settings.booking_create_api_url, json=payload, headers=auth_headers or {})
+                response = client.post(settings.booking_create_api_url, json=payload, headers=request_headers)
                 
                 logger.info("📥 RESPONSE RECEIVED")
                 logger.info("   Status Code: %s", response.status_code)
@@ -202,7 +215,7 @@ class BookingService:
                     paynow_response = client.post(
                         settings.booking_paynow_api_url,
                         json=paynow_payload,
-                        headers=auth_headers or {}
+                        headers=request_headers
                     )
                     paynow_response.raise_for_status()
                     paynow_result = paynow_response.json()
