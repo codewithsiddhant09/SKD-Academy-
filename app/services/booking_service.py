@@ -464,3 +464,70 @@ class BookingService:
         # This would need to be implemented in the external API
         # For now, we'll use the existing method and hope order_id works
         return self.view_external_booking(order_id, auth_headers)
+
+    def verify_payment_status(self, booking_id: str, auth_headers: dict[str, str]) -> dict[str, Any]:
+        """
+        Verify Ziina payment status for a booking.
+        
+        Returns:
+            {
+                "paymentStatus": "Paid" | "Pending" | "Failed",
+                "bookingStatus": "Approved" | "Pending",
+                "verified": bool
+            }
+        """
+        settings = get_settings()
+        
+        # Prepare headers
+        request_headers = {}
+        if auth_headers:
+            request_headers.update(auth_headers)
+            token = auth_headers.get("x-auth-token-user") or auth_headers.get("x-auth-token")
+            if token:
+                request_headers["x-auth-token-user"] = token
+                request_headers["Authorization"] = f"Bearer {token}"
+        
+        payload = {"bookingId": booking_id}
+        
+        logger.info("=" * 80)
+        logger.info("🔍 VERIFYING PAYMENT STATUS")
+        logger.info("=" * 80)
+        logger.info("📍 URL: %s", settings.booking_verify_payment_api_url)
+        logger.info("📦 Booking ID: %s", booking_id)
+        
+        try:
+            with httpx.Client(timeout=settings.booking_api_timeout_seconds, verify=settings.booking_api_verify_ssl) as client:
+                response = client.put(settings.booking_verify_payment_api_url, json=payload, headers=request_headers)
+                
+                logger.info("📥 RESPONSE RECEIVED")
+                logger.info("   Status Code: %s", response.status_code)
+                logger.info("   Response: %s", response.text[:500])
+                
+                response.raise_for_status()
+                result = response.json()
+                
+                logger.info("✅ PAYMENT VERIFICATION SUCCESS")
+                logger.info("=" * 80)
+                
+                return result
+                
+        except httpx.TimeoutException as exc:
+            logger.error("⏱️ PAYMENT VERIFICATION TIMEOUT")
+            logger.error("=" * 80)
+            raise RuntimeError("Payment verification timed out; please try again later.") from exc
+        except httpx.HTTPStatusError as exc:
+            logger.error("❌ PAYMENT VERIFICATION HTTP ERROR")
+            logger.error("   Status: %s", exc.response.status_code)
+            logger.error("   Response: %s", exc.response.text[:500])
+            logger.error("=" * 80)
+            raise RuntimeError(f"Payment verification failed: HTTP {exc.response.status_code}") from exc
+        except httpx.RequestError as exc:
+            logger.error("❌ PAYMENT VERIFICATION REQUEST ERROR")
+            logger.error("   Error: %s", str(exc))
+            logger.error("=" * 80)
+            raise RuntimeError(f"Payment verification request failed: {exc}") from exc
+        except ValueError as exc:
+            logger.error("❌ PAYMENT VERIFICATION INVALID JSON")
+            logger.error("=" * 80)
+            raise RuntimeError("Payment verification returned invalid JSON.") from exc
+

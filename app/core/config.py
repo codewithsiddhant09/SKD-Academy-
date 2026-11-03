@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     whatsapp_booking_secret: str = ""
     booking_create_api_url: str = "http://15.252.235.83:2053/booking/createBooking"
     booking_paynow_api_url: str = "http://15.252.235.83:2053/booking/payNowBooking"
+    booking_verify_payment_api_url: str = "http://15.252.235.83:2053/payment/verifyZiinaPayment"
     booking_view_api_url: str = "http://15.252.235.83:2053/booking/viewBooking"
     booking_cancellation_amount_api_url: str = "http://15.252.235.83:2053/booking/getCancellationAmount"
     booking_cancel_api_url: str = "http://15.252.235.83:2053/booking/cancelBookingByUser"

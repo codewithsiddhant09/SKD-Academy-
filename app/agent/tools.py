@@ -284,6 +284,20 @@ class reset_booking(BaseModel):
     WHY: Use when the customer says they no longer want to book, or wants to start over."""
 
 
+class check_payment_status(BaseModel):
+    """Check if payment has been completed for a PayNow booking.
+    
+    Use this when:
+    - Customer returns after making payment
+    - Customer asks if their payment went through
+    - Customer wants to check booking status after payment
+    
+    Returns payment status (Paid/Pending) and booking status (Approved/Pending).
+    If payment is complete, acknowledge with congratulations message."""
+    
+    booking_id: str = Field(description="The booking ID (_id) to check payment status for")
+
+
 # --------------------------------------------------------------------------- #
 # Handlers
 # --------------------------------------------------------------------------- #
@@ -923,6 +937,81 @@ def run_confirm_booking(ctx: ToolContext, args: confirm_booking) -> dict:
     return result
 
 
+def run_check_payment_status(ctx: ToolContext, args: check_payment_status) -> dict:
+    """Check if payment has been completed for a booking."""
+    session = ctx.session
+    logger.info("=== CHECK_PAYMENT_STATUS CALLED ===")
+    logger.info("Booking ID: %s", args.booking_id)
+    
+    try:
+        # Get auth headers
+        if session.booking_platform == "whatsapp":
+            secret = get_settings().whatsapp_booking_secret
+            if not secret:
+                return {"error": "WhatsApp booking is not configured."}
+            auth_headers = {"x-whatsapp-booking-key": secret}
+        else:
+            token = session.jwt_token or session.auth_token or get_settings().bookly_api_token
+            if not token:
+                return {"error": "Authentication token is required.", "retry_safe": False}
+            auth_headers = {"x-auth-language": "English", "x-user-type": "User", "x-auth-token-user": token}
+        
+        # Call payment verification API
+        result = ctx.bookings.verify_payment_status(args.booking_id, auth_headers)
+        
+        if not isinstance(result, dict) or result.get("error") is True:
+            message = result.get("message", "Payment verification failed.") if isinstance(result, dict) else "Invalid response"
+            return {"error": message, "verified": False}
+        
+        # Extract payment and booking status
+        booking_data = result.get("results", {}).get("booking", {}) if isinstance(result.get("results"), dict) else {}
+        payment_status = booking_data.get("paymentStatus", "Unknown")
+        booking_status = booking_data.get("bookingStatus", "Unknown")
+        order_id = booking_data.get("orderId", "")
+        
+        response = {
+            "verified": True,
+            "payment_status": payment_status,
+            "booking_status": booking_status,
+            "booking_id": args.booking_id,
+            "order_id": order_id,
+        }
+        
+        # Add appropriate customer message
+        if payment_status == "Paid" and booking_status == "Approved":
+            response["tell_customer"] = (
+                f"🎉 Congratulations! Your payment has been successfully completed. "
+                f"Your booking (Order ID: {order_id}) is now CONFIRMED and APPROVED. "
+                f"We look forward to serving you!"
+            )
+            response["payment_complete"] = True
+        elif payment_status == "Paid":
+            response["tell_customer"] = (
+                f"✅ Your payment has been received successfully! "
+                f"Your booking (Order ID: {order_id}) is being processed. "
+                f"Current status: {booking_status}"
+            )
+            response["payment_complete"] = True
+        elif payment_status == "Pending":
+            response["tell_customer"] = (
+                f"Your booking (Order ID: {order_id}) is awaiting payment. "
+                f"Please complete the payment to confirm your booking."
+            )
+            response["payment_complete"] = False
+        else:
+            response["tell_customer"] = (
+                f"Your booking (Order ID: {order_id}) status: {booking_status}. "
+                f"Payment status: {payment_status}."
+            )
+            response["payment_complete"] = False
+        
+        logger.info("Payment check result: %s", response)
+        return response
+        
+    except RuntimeError as exc:
+        logger.error("PAYMENT_CHECK_FAILED: %s", exc)
+        return {"error": str(exc), "verified": False, "retry_safe": True}
+
 
 def _request_view(req: dict) -> dict[str, Any]:
     status = req.get("status")
@@ -1144,6 +1233,7 @@ TOOLS: dict[str, tuple[type[BaseModel], ToolHandler]] = {
     "set_booking_type": (set_booking_type, run_set_booking_type),
     "save_booking_contact": (save_booking_contact, run_save_booking_contact),
     "confirm_booking": (confirm_booking, run_confirm_booking),
+    "check_payment_status": (check_payment_status, run_check_payment_status),
     "quote_booking_cancellation": (quote_booking_cancellation, run_quote_booking_cancellation),
     "cancel_bookly_booking": (cancel_bookly_booking, run_cancel_bookly_booking),
     "get_booking_request": (get_booking_request, run_get_booking_request),

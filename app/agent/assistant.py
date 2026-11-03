@@ -121,6 +121,9 @@ Booking rules:
   The booking is created immediately via Bookly API - do NOT say "salon will review" or "waiting for approval".
 - For PayNow: The response includes a payment link. Tell customer to complete payment within 10 minutes
   or the booking will be automatically cancelled. Show the payment link clearly.
+- After PayNow payment: When customer returns or asks about payment status, use check_payment_status tool
+  to verify if payment is complete. If payment is confirmed (status: Paid), congratulate them and confirm
+  their booking is approved. Never assume payment is complete without checking.
 - For PayAtStore: The booking is APPROVED immediately. Tell customer their appointment is confirmed and
   they will pay at the salon after the service is complete.
 - For cancellation, retrieve and show the Bookly cancellation quote (including any fees) before asking 
