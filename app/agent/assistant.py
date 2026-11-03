@@ -104,7 +104,9 @@ Booking rules:
     * Address
   - For Home Service ONLY, also ask for:
     * City
-    * Zip code / Postal code
+    * Location coordinates (latitude/longitude) - can be obtained from address
+  
+  NOTE: Do NOT ask for zip code / postal code - it is not required.
   
   When customer provides contact details in the conversation:
   1. Parse all information from their message (name, email, phone, country code, address, city, zip)

@@ -181,14 +181,16 @@ class save_booking_contact(BaseModel):
     """Saves customer contact information for the booking.
     
     WHEN TO USE:
-    - When customer provides their contact details (address, city, zip code, etc.)
+    - When customer provides their contact details (address, city, etc.)
     - Before calling confirm_booking, save all provided contact information
+    
+    NOTE: Zip code is optional and NOT required for bookings.
     
     Call this whenever the customer provides contact details in the conversation."""
 
     address: str | None = Field(default=None, description="Full street address")
     city: str | None = Field(default=None, description="City name")
-    zip_code: str | None = Field(default=None, description="Zip code / postal code")
+    zip_code: str | None = Field(default=None, description="Zip code / postal code (OPTIONAL - not required)")
     contact_name: str | None = Field(default=None, description="Full name")
     email: str | None = Field(default=None, description="Email address")
     phone_number: str | None = Field(default=None, description="Phone number without country code")
@@ -803,11 +805,10 @@ def run_confirm_booking(ctx: ToolContext, args: confirm_booking) -> dict:
             "phone number": phone,
             "address": address,  # Always required for app bookings
         }
-        # For home service: also require city, zip code, and location coordinates
+        # For home service: also require city and location coordinates (NO zip code)
         if is_home_service:
             required.update({
                 "city": city,
-                "zip code": zip_code,
                 "latitude": latitude,
                 "longitude": longitude,
             })
