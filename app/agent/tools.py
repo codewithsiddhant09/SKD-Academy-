@@ -846,7 +846,13 @@ def run_confirm_booking(ctx: ToolContext, args: confirm_booking) -> dict:
             result = ctx.bookings.create_external_booking(booking_payload, {"x-whatsapp-booking-key": secret})
         else:
             token = session.jwt_token or session.auth_token or get_settings().bookly_api_token
-            auth_headers = {"x-auth-language": "English", "x-user-type": "User", "x-auth-token": token} if token else None
+            logger.info("AUTH TOKEN CHECK: jwt_token=%s, auth_token=%s, bookly_api_token=%s", 
+                       bool(session.jwt_token), bool(session.auth_token), bool(get_settings().bookly_api_token))
+            if not token:
+                logger.error("NO AUTH TOKEN AVAILABLE! Cannot create booking without authentication.")
+                return {"error": "Authentication token is required but not provided. Please ensure you're logged in.", "retry_safe": False}
+            auth_headers = {"x-auth-language": "English", "x-user-type": "User", "x-auth-token": token}
+            logger.info("Calling booking API with auth headers: %s", {k: v[:20] + "..." if k == "x-auth-token" and len(v) > 20 else v for k, v in auth_headers.items()})
             result = ctx.bookings.create_external_booking(booking_payload, auth_headers)
     except RuntimeError as exc:
         logger.warning("BOOKING_API_FAILED: %s", exc)

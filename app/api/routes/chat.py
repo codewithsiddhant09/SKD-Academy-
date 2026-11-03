@@ -14,6 +14,16 @@ def _assistant():
 
 @router.post("/chat", response_model=ChatResponse)
 def chat(payload: ChatRequest) -> ChatResponse:
+    from app.core.logging import get_logger
+    logger = get_logger(__name__)
+    
+    logger.info("=== CHAT REQUEST RECEIVED ===")
+    logger.info("session_id: %s", payload.session_id)
+    logger.info("platform: %s", payload.platform)
+    logger.info("user_id: %s", payload.user_id)
+    logger.info("auth_token present: %s", bool(payload.auth_token))
+    logger.info("auth_token value: %s", payload.auth_token[:20] + "..." if payload.auth_token and len(payload.auth_token) > 20 else payload.auth_token)
+    
     assistant = _assistant()
     session = assistant.sessions.get(payload.session_id)
     session.booking_platform = payload.platform
@@ -21,6 +31,9 @@ def chat(payload: ChatRequest) -> ChatResponse:
     session.whatsapp_name = payload.user_name if payload.platform == "whatsapp" else None
     if payload.platform == "app" and payload.auth_token:
         session.jwt_token = payload.auth_token
+        logger.info("Auth token saved to session.jwt_token")
+    else:
+        logger.warning("No auth_token provided! platform=%s, auth_token=%s", payload.platform, payload.auth_token)
     if payload.payment_option:
         session.payment_option = payload.payment_option
     return assistant.chat(session_id=payload.session_id, user_message=payload.message, user_id=payload.user_id if payload.platform == "app" else None)
