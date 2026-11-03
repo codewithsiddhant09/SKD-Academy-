@@ -130,18 +130,54 @@ class BookingService:
         payload["bookingStatus"] = booking_status
         
         # Make the API call
+        logger.info("=" * 80)
+        logger.info("🚀 CALLING BOOKING API")
+        logger.info("=" * 80)
+        logger.info("📍 URL: %s", settings.booking_create_api_url)
+        logger.info("📦 PAYLOAD: %s", payload)
+        logger.info("🔐 AUTH HEADERS PROVIDED: %s", bool(auth_headers))
+        if auth_headers:
+            logger.info("🔑 AUTH HEADERS KEYS: %s", list(auth_headers.keys()))
+            for key, value in auth_headers.items():
+                if key == "x-auth-token" and value:
+                    logger.info("   %s: %s... (length=%d)", key, value[:20] if len(value) > 20 else value, len(value))
+                else:
+                    logger.info("   %s: %s", key, value)
+        else:
+            logger.error("❌ NO AUTH HEADERS! API will return 401")
+        logger.info("=" * 80)
+        
         try:
             with httpx.Client(timeout=settings.booking_api_timeout_seconds, verify=settings.booking_api_verify_ssl) as client:
                 response = client.post(settings.booking_create_api_url, json=payload, headers=auth_headers or {})
+                
+                logger.info("📥 RESPONSE RECEIVED")
+                logger.info("   Status Code: %s", response.status_code)
+                logger.info("   Response: %s", response.text[:500])
+                
                 response.raise_for_status()
                 result = response.json()
+                
+                logger.info("✅ BOOKING API SUCCESS")
+                logger.info("=" * 80)
         except httpx.TimeoutException as exc:
+            logger.error("⏱️ BOOKING API TIMEOUT")
+            logger.error("=" * 80)
             raise RuntimeError("Booking request timed out; verify booking status before retrying.") from exc
         except httpx.HTTPStatusError as exc:
+            logger.error("❌ BOOKING API HTTP ERROR")
+            logger.error("   Status: %s", exc.response.status_code)
+            logger.error("   Response: %s", exc.response.text[:500])
+            logger.error("=" * 80)
             raise RuntimeError(f"Booking API returned HTTP {exc.response.status_code}: {exc.response.text[:500]}") from exc
         except httpx.RequestError as exc:
+            logger.error("❌ BOOKING API REQUEST ERROR")
+            logger.error("   Error: %s", str(exc))
+            logger.error("=" * 80)
             raise RuntimeError(f"Booking API request failed: {exc}") from exc
         except ValueError as exc:
+            logger.error("❌ BOOKING API INVALID JSON")
+            logger.error("=" * 80)
             raise RuntimeError("Booking API returned invalid JSON.") from exc
 
         if not isinstance(result, dict) or result.get("error") is True:
