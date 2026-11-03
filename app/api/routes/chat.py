@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
 from app.api import deps
 from app.models.schemas import ChatRequest, ChatResponse, DebugRagRequest, DebugRagResponse
@@ -13,7 +13,7 @@ def _assistant():
 
 
 @router.post("/chat", response_model=ChatResponse)
-def chat(payload: ChatRequest) -> ChatResponse:
+def chat(payload: ChatRequest, request: Request) -> ChatResponse:
     from app.core.logging import get_logger
     logger = get_logger(__name__)
     
@@ -21,21 +21,39 @@ def chat(payload: ChatRequest) -> ChatResponse:
     logger.info("session_id: %s", payload.session_id)
     logger.info("platform: %s", payload.platform)
     logger.info("user_id: %s", payload.user_id)
-    logger.info("auth_token present: %s", bool(payload.auth_token))
-    logger.info("auth_token value: %s", payload.auth_token[:20] + "..." if payload.auth_token and len(payload.auth_token) > 20 else payload.auth_token)
+    
+    # Check for token in request body
+    body_token = payload.auth_token
+    logger.info("auth_token in BODY: %s", bool(body_token))
+    
+    # Check for token in headers
+    header_token = request.headers.get("x-auth-token") or request.headers.get("x-auth-token-user")
+    logger.info("auth_token in HEADERS: %s", bool(header_token))
+    
+    # Use token from body first, fallback to headers
+    final_token = body_token or header_token
+    
+    if final_token:
+        logger.info("✅ TOKEN FOUND: %s... (length=%d)", final_token[:20], len(final_token))
+    else:
+        logger.warning("❌ NO TOKEN FOUND in body or headers!")
     
     assistant = _assistant()
     session = assistant.sessions.get(payload.session_id)
     session.booking_platform = payload.platform
     session.whatsapp_phone = payload.user_id if payload.platform == "whatsapp" else None
     session.whatsapp_name = payload.user_name if payload.platform == "whatsapp" else None
-    if payload.platform == "app" and payload.auth_token:
-        session.jwt_token = payload.auth_token
-        logger.info("Auth token saved to session.jwt_token")
+    
+    # Save token to session (from body OR headers)
+    if payload.platform == "app" and final_token:
+        session.jwt_token = final_token
+        logger.info("✅ Auth token saved to session.jwt_token")
     else:
-        logger.warning("No auth_token provided! platform=%s, auth_token=%s", payload.platform, payload.auth_token)
+        logger.warning("⚠️ No auth_token saved! platform=%s, token=%s", payload.platform, bool(final_token))
+    
     if payload.payment_option:
         session.payment_option = payload.payment_option
+    
     return assistant.chat(session_id=payload.session_id, user_message=payload.message, user_id=payload.user_id if payload.platform == "app" else None)
 
 
