@@ -373,13 +373,19 @@ class BookingService:
         """Fetch one Bookly booking using the app's Bookly API token."""
         settings = get_settings()
         url = f"{settings.booking_view_api_url.rstrip('/')}/{booking_id}"
+        
+        # Get token from headers (prefer x-auth-token-user for consistency)
+        token = auth_headers.get("x-auth-token-user") or auth_headers.get("x-auth-token") or get_settings().bookly_api_token
+        if not token:
+            raise RuntimeError("BOOKLY_API_TOKEN is not configured.")
+        
         headers = {
             "x-auth-language": auth_headers.get("x-auth-language", "English"),
             "x-user-type": auth_headers.get("x-user-type", "User"),
-            "x-auth-token": auth_headers.get("x-auth-token") or auth_headers.get("x-auth-token-user") or get_settings().bookly_api_token,
+            "x-auth-token-user": token,
+            "Authorization": f"Bearer {token}",
         }
-        if not headers["x-auth-token"]:
-            raise RuntimeError("BOOKLY_API_TOKEN is not configured.")
+        
         try:
             with httpx.Client(timeout=settings.booking_api_timeout_seconds, verify=settings.booking_api_verify_ssl) as client:
                 response = client.get(url, headers=headers)
