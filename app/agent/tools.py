@@ -968,6 +968,17 @@ def run_check_payment_status(ctx: ToolContext, args: check_payment_status) -> di
         
         # Extract payment and booking status
         booking_data = result.get("results", {}).get("booking", {}) if isinstance(result.get("results"), dict) else {}
+        
+        # If booking data is empty but verification succeeded, fetch booking details separately
+        if not booking_data and result.get("message") == "Booking already paid":
+            logger.info("Verification successful but no booking data returned. Fetching booking details...")
+            try:
+                booking_data = ctx.bookings.view_external_booking(args.booking_id, auth_headers)
+                logger.info("Booking details fetched: status=%s, payment=%s", 
+                           booking_data.get("bookingStatus"), booking_data.get("paymentStatus"))
+            except Exception as e:
+                logger.error("Failed to fetch booking details: %s", e)
+        
         payment_status = booking_data.get("paymentStatus", "Unknown")
         booking_status = booking_data.get("bookingStatus", "Unknown")
         order_id = booking_data.get("orderId", "")
