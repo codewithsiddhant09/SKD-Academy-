@@ -1252,7 +1252,7 @@ def run_quote_booking_cancellation(ctx: ToolContext, args: quote_booking_cancell
     token = ctx.session.jwt_token or ctx.session.auth_token or get_settings().bookly_api_token
     if not token:
         return {"error": "BOOKLY_API_TOKEN is not configured."}
-    headers = {"x-auth-language": "English", "x-user-type": "User", "x-auth-token": token}
+    headers = {"x-auth-language": "English", "x-user-type": "User", "x-auth-token-user": token}
     try:
         quote = ctx.bookings.get_cancellation_amount(args.order_id, headers)
     except RuntimeError as exc:
@@ -1278,7 +1278,7 @@ def run_cancel_bookly_booking(ctx: ToolContext, args: cancel_bookly_booking) -> 
     token = ctx.session.jwt_token or ctx.session.auth_token or get_settings().bookly_api_token
     if not token:
         return {"error": "BOOKLY_API_TOKEN is not configured."}
-    headers = {"x-auth-language": "English", "x-user-type": "User", "x-auth-token": token}
+    headers = {"x-auth-language": "English", "x-user-type": "User", "x-auth-token-user": token}
     try:
         result = ctx.bookings.cancel_external_booking(
             {"bookingId": booking_id, "cancelledReason": args.reason or "Customer requested cancellation", "additionalNotes": args.additional_notes},
