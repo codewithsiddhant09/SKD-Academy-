@@ -1011,7 +1011,8 @@ def run_check_payment_status(ctx: ToolContext, args: check_payment_status) -> di
         logger.info("Payment check result: %s", response)
         
         # Clear the pending payment check flag after verification
-        ctx.session.pending_payment_check = False
+        if hasattr(ctx.session, 'pending_payment_check'):
+            ctx.session.pending_payment_check = False
         
         return response
         

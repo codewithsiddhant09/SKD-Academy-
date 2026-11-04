@@ -208,8 +208,8 @@ class BookingAssistant:
             "booking_summary_awaiting_payment_choice": session.awaiting_confirmation and not session.editing_request,
             "summary_shown_awaiting_confirmation": session.awaiting_confirmation,
             "selected_payment_option": session.payment_option,
-            "pending_payment_check": session.pending_payment_check,
-            "last_booking_id": session.last_booking_id if session.pending_payment_check else None,
+            "pending_payment_check": getattr(session, 'pending_payment_check', False),
+            "last_booking_id": getattr(session, 'last_booking_id', None) if getattr(session, 'pending_payment_check', False) else None,
             "modifying_request_id": session.editing_request.get("request_id") if session.editing_request else None,
             "salons_seen": [
                 {"salon_id": s.vendor_id, "name": s.salon_name, "services": s.services}
