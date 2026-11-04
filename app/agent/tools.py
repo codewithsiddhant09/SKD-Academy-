@@ -914,16 +914,21 @@ def run_confirm_booking(ctx: ToolContext, args: confirm_booking) -> dict:
     if payment_option == "Pay Now":
         if payment_url:
             result["payment_url"] = payment_url
+            # Get the final amount to display
+            final_amount = booking.get("finalAmount")
+            amount_text = f" of AED {final_amount:.2f}" if final_amount else ""
             result["tell_customer"] = (
                 f"Your booking is confirmed with order ID {request_id}! "
-                f"Please complete your payment within 10 minutes using the payment link. "
+                f"Please complete your payment{amount_text} within 10 minutes using the payment link. "
                 f"If payment is not completed, the booking will be automatically cancelled."
             )
         else:
+            final_amount = booking.get("finalAmount")
+            amount_text = f" of AED {final_amount:.2f}" if final_amount else ""
             result["tell_customer"] = (
                 f"Your booking was created with order ID {request_id}. "
                 f"Status: {booking.get('bookingStatus', 'Pending')}. "
-                f"Please complete payment to confirm."
+                f"Please complete payment{amount_text} to confirm."
             )
     elif payment_option == "Pay at Store":
         result["tell_customer"] = (
