@@ -31,6 +31,8 @@ class Session:
     location: str | None = None
     booking_contact: dict | None = None
     last_booking_order_id: str | None = None
+    last_booking_id: str | None = None  # For payment verification
+    pending_payment_check: bool = False  # True after PayNow booking, cleared after verification
     # True once a complete draft was summarised and awaits payment choice or modification confirmation.
     awaiting_confirmation: bool = False
     # Set only from a customer's explicit choice after they saw the summary.

@@ -896,6 +896,8 @@ def run_confirm_booking(ctx: ToolContext, args: confirm_booking) -> dict:
         "platform": session.booking_platform,
     }
     session.last_booking_order_id = request_id
+    session.last_booking_id = booking_id
+    session.pending_payment_check = (payment_option == "Pay Now")  # Flag for auto-check on next message
     session.draft = BookingPayload()
     session.awaiting_confirmation = False
     session.payment_option = None
@@ -1007,6 +1009,10 @@ def run_check_payment_status(ctx: ToolContext, args: check_payment_status) -> di
             response["payment_complete"] = False
         
         logger.info("Payment check result: %s", response)
+        
+        # Clear the pending payment check flag after verification
+        ctx.session.pending_payment_check = False
+        
         return response
         
     except RuntimeError as exc:

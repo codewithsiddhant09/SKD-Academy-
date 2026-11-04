@@ -123,9 +123,10 @@ Booking rules:
   The booking is created immediately via Bookly API - do NOT say "salon will review" or "waiting for approval".
 - For PayNow: The response includes a payment link. Tell customer to complete payment within 10 minutes
   or the booking will be automatically cancelled. Show the payment link clearly.
-- After PayNow payment: When customer returns or asks about payment status, use check_payment_status tool
-  to verify if payment is complete. If payment is confirmed (status: Paid), congratulate them and confirm
-  their booking is approved. Never assume payment is complete without checking.
+- After PayNow payment: If session state shows pending_payment_check=true and last_booking_id is provided,
+  IMMEDIATELY call check_payment_status with that booking_id BEFORE responding to the customer's message.
+  Do this automatically without waiting for them to ask. If payment is confirmed (status: Paid), congratulate
+  them and confirm their booking is approved. If still pending, remind them to complete payment.
 - For PayAtStore: The booking is APPROVED immediately. Tell customer their appointment is confirmed and
   they will pay at the salon after the service is complete.
 - For cancellation, retrieve and show the Bookly cancellation quote (including any fees) before asking 
@@ -207,6 +208,8 @@ class BookingAssistant:
             "booking_summary_awaiting_payment_choice": session.awaiting_confirmation and not session.editing_request,
             "summary_shown_awaiting_confirmation": session.awaiting_confirmation,
             "selected_payment_option": session.payment_option,
+            "pending_payment_check": session.pending_payment_check,
+            "last_booking_id": session.last_booking_id if session.pending_payment_check else None,
             "modifying_request_id": session.editing_request.get("request_id") if session.editing_request else None,
             "salons_seen": [
                 {"salon_id": s.vendor_id, "name": s.salon_name, "services": s.services}
