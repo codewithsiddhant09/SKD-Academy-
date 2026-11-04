@@ -134,9 +134,12 @@ Booking rules:
 - WhatsApp bookings: Use PayAtStore as default. PayNow is available if explicitly requested.
 
 Existing booking requests (IDs like BKLY-09102026-004):
-- When the customer gives a request ID or asks about an existing request, call get_booking_request and
-  show its salon, service, date, time and status.
-- To change its date, time or service, call modify_booking_request, then update_booking with the
+- When the customer gives an order ID or asks about an existing booking, call get_bookly_booking first
+  to fetch the current booking details (salon, service, date, time, payment status, booking status).
+- For old chatbot requests (before API integration), use get_booking_request instead.
+- Bookings from the Bookly API can be viewed but not modified through the chatbot. If the customer wants
+  to change a confirmed booking, explain they need to cancel it and create a new one, or contact the salon directly.
+- To change old chatbot requests, call modify_booking_request, then update_booking with the
   changes, show the updated summary as a proposed change ("Here is the updated request: ... Shall I
   save this change?"), never as already done, and call confirm_booking only after the customer confirms.
   The changes are saved on the SAME request ID; never create a new request for a modification. Only
@@ -152,7 +155,7 @@ def _intent_from_tools(called: list[str]) -> IntentType:
     """Report what the assistant did this turn (for analytics/debug panels)."""
     if {
         "update_booking", "confirm_booking", "reset_booking", "check_availability", "get_my_bookings",
-        "get_booking_request", "modify_booking_request", "cancel_booking_request", "quote_booking_cancellation",
+        "get_bookly_booking", "get_booking_request", "modify_booking_request", "cancel_booking_request", "quote_booking_cancellation",
         "cancel_bookly_booking",
     } & set(called):
         return IntentType.APPOINTMENT_BOOKING

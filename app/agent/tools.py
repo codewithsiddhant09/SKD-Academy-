@@ -246,6 +246,15 @@ class cancel_bookly_booking(BaseModel):
     confirmed: bool = False
 
 
+class get_bookly_booking(BaseModel):
+    """WHAT: Fetches a Bookly booking by its order ID (e.g. BKLY-04112026-009) from the booking system.
+    Returns salon, service, date, time, payment status, and booking status.
+    WHY: Use when the customer asks about or wants to modify a booking they created (not old chatbot requests).
+    For old chatbot requests from before the API integration, use get_booking_request instead."""
+
+    order_id: str = Field(description="Booking order ID, e.g. 'BKLY-04112026-009'.")
+
+
 class get_booking_request(BaseModel):
     """WHAT: Fetches an existing booking request by its ID (e.g. BKLY-09102026-004): salon, service,
     date, time, status, and whether it can still be modified or cancelled.
@@ -1071,6 +1080,56 @@ def _load_request(ctx: ToolContext, request_id: str) -> tuple[dict | None, dict 
     return req, None
 
 
+def run_get_bookly_booking(ctx: ToolContext, args: get_bookly_booking) -> dict:
+    """Fetch a Bookly booking by order ID."""
+    token = ctx.session.jwt_token or ctx.session.auth_token or get_settings().bookly_api_token
+    if not token:
+        return {"error": "Authentication required. Please log in."}
+    
+    auth_headers = {
+        "x-auth-language": "English",
+        "x-user-type": "User",
+        "x-auth-token-user": token
+    }
+    
+    try:
+        # Try to fetch booking using the order ID
+        booking = ctx.bookings.view_external_booking(args.order_id, auth_headers)
+        
+        # Extract and format booking details
+        salon_name = booking.get("vendorName") or "Unknown Salon"
+        service_names = booking.get("serviceNames", [])
+        if not service_names and booking.get("services"):
+            # Fallback: just show service IDs if names not available
+            service_names = [f"Service {sid}" for sid in booking.get("services", [])]
+        
+        booking_date = booking.get("date")
+        if isinstance(booking_date, datetime):
+            booking_date = booking_date.date().isoformat()
+        
+        return {
+            "order_id": booking.get("orderId"),
+            "booking_id": booking.get("_id") or booking.get("bookingId"),
+            "salon": salon_name,
+            "services": service_names,
+            "date": booking_date,
+            "time": booking.get("slot"),
+            "booking_status": booking.get("bookingStatus", "Unknown"),
+            "payment_status": booking.get("paymentStatus", "Unknown"),
+            "payment_option": booking.get("payOption"),
+            "booking_place": booking.get("BookingAppointment") or booking.get("bookingPlace"),
+            "final_amount": booking.get("finalAmount"),
+            "can_cancel": booking.get("bookingStatus") not in ["Cancelled", "Completed", "Rejected"],
+        }
+    except RuntimeError as exc:
+        logger.warning("FETCH_BOOKLY_BOOKING_FAILED: %s", exc)
+        # Fallback: try old chatbot request system
+        req = ctx.bookings.find_request(args.order_id)
+        if req:
+            return run_get_booking_request(ctx, get_booking_request(request_id=args.order_id))
+        return {"error": f"Booking {args.order_id} not found. {str(exc)}"}
+
+
 def run_get_booking_request(ctx: ToolContext, args: get_booking_request) -> dict:
     req, error = _load_request(ctx, args.request_id)
     if error:
@@ -1260,6 +1319,7 @@ TOOLS: dict[str, tuple[type[BaseModel], ToolHandler]] = {
     "check_payment_status": (check_payment_status, run_check_payment_status),
     "quote_booking_cancellation": (quote_booking_cancellation, run_quote_booking_cancellation),
     "cancel_bookly_booking": (cancel_bookly_booking, run_cancel_bookly_booking),
+    "get_bookly_booking": (get_bookly_booking, run_get_bookly_booking),
     "get_booking_request": (get_booking_request, run_get_booking_request),
     "modify_booking_request": (modify_booking_request, run_modify_booking_request),
     "cancel_booking_request": (cancel_booking_request, run_cancel_booking_request),
