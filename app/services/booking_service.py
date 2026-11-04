@@ -349,11 +349,30 @@ class BookingService:
                 raise RuntimeError(f"Refund failed: {str(e)}")
         
         # Make the cancellation API call
+        logger.info("================================================================================")
+        logger.info("🚫 CALLING CANCELLATION API")
+        logger.info("================================================================================")
+        logger.info(f"📍 URL: {settings.booking_cancel_api_url}")
+        logger.info(f"📦 PAYLOAD: {payload}")
+        logger.info(f"🔑 AUTH HEADERS: {list(auth_headers.keys())}")
+        for key, value in auth_headers.items():
+            if 'token' in key.lower():
+                logger.info(f"   {key}: {value[:20]}... (length={len(value)})")
+            else:
+                logger.info(f"   {key}: {value}")
+        logger.info("================================================================================")
+        
         try:
             with httpx.Client(timeout=settings.booking_api_timeout_seconds, verify=settings.booking_api_verify_ssl) as client:
                 response = client.put(settings.booking_cancel_api_url, json=payload, headers=auth_headers)
                 response.raise_for_status()
                 result = response.json()
+                
+                logger.info("📥 CANCELLATION RESPONSE RECEIVED")
+                logger.info(f"   Status Code: {response.status_code}")
+                logger.info(f"   Response: {result}")
+                logger.info("✅ CANCELLATION API SUCCESS")
+                logger.info("================================================================================")
         except httpx.TimeoutException as exc:
             raise RuntimeError("Cancellation request timed out; verify booking status before retrying.") from exc
         except httpx.HTTPStatusError as exc:
