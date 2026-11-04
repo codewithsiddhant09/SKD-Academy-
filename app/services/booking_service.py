@@ -486,8 +486,19 @@ class BookingService:
 
     def view_external_booking_by_order_id(self, order_id: str, auth_headers: dict[str, str]) -> dict[str, Any]:
         """Fetch booking by order ID instead of internal _id."""
-        # This would need to be implemented in the external API
-        # For now, we'll use the existing method and hope order_id works
+        # Look up the internal booking ID from MongoDB
+        from app.repositories.mongo import get_database
+        db = get_database()
+        
+        if db:
+            booking_doc = db.bookings.find_one({"orderId": order_id})
+            if booking_doc:
+                booking_id = str(booking_doc["_id"])
+                logger.info(f"Found booking ID {booking_id} for order ID {order_id}")
+                return self.view_external_booking(booking_id, auth_headers)
+        
+        # Fallback: try using order ID directly (probably won't work but worth a try)
+        logger.warning(f"Could not find booking ID for order {order_id}, trying order ID directly")
         return self.view_external_booking(order_id, auth_headers)
 
     def verify_payment_status(self, booking_id: str, auth_headers: dict[str, str]) -> dict[str, Any]:

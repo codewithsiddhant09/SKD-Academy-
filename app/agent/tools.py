@@ -1092,9 +1092,32 @@ def run_get_bookly_booking(ctx: ToolContext, args: get_bookly_booking) -> dict:
         "x-auth-token-user": token
     }
     
+    # First, check if this is the last booking we created (optimization)
+    if ctx.session.last_booking_order_id == args.order_id and ctx.session.last_booking_id:
+        logger.info(f"Using cached booking ID for order {args.order_id}: {ctx.session.last_booking_id}")
+        booking_id = ctx.session.last_booking_id
+    else:
+        # Need to look up the booking ID from the database by order ID
+        # Try to find in MongoDB first
+        from app.repositories.mongo import get_database
+        db = get_database()
+        if db:
+            booking_doc = db.bookings.find_one({"orderId": args.order_id})
+            if booking_doc:
+                booking_id = str(booking_doc["_id"])
+                logger.info(f"Found booking ID in MongoDB for order {args.order_id}: {booking_id}")
+            else:
+                # Not found in MongoDB, fallback to old chatbot requests
+                req = ctx.bookings.find_request(args.order_id)
+                if req:
+                    return run_get_booking_request(ctx, get_booking_request(request_id=args.order_id))
+                return {"error": f"Booking {args.order_id} not found."}
+        else:
+            return {"error": "Database connection not available."}
+    
     try:
-        # Try to fetch booking using the order ID
-        booking = ctx.bookings.view_external_booking(args.order_id, auth_headers)
+        # Fetch booking using the internal booking ID
+        booking = ctx.bookings.view_external_booking(booking_id, auth_headers)
         
         # Extract and format booking details
         salon_name = booking.get("vendorName") or "Unknown Salon"
