@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Payment Status Monitor - Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+        }
+        .status {
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 5px;
+            font-weight: bold;
+        }
+        .connected {
+            background: #d4edda;
+            color: #155724;
+        }
+        .payment-success {
+            background: #d4edda;
+            color: #155724;
+            font-size: 18px;
+        }
+        .payment-failed {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        .waiting {
+            background: #fff3cd;
+            color: #856404;
+        }
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        #log {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+            max-height: 400px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        .log-entry {
+            margin: 5px 0;
+            padding: 5px;
+            border-left: 3px solid #007bff;
+            padding-left: 10px;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 10px 5px;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        input {
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            width: 300px;
+            font-size: 14px;
+        }
+        .input-group {
+            margin: 20px 0;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔄 Real-Time Payment Status Monitor</h1>
+        
+        <div class="input-group">
+            <label>Session ID:</label>
+            <input type="text" id="sessionId" placeholder="Enter session ID" value="test_session_123">
+        </div>
+        
+        <button id="startBtn" onclick="startMonitoring()">Start Monitoring</button>
+        <button id="stopBtn" onclick="stopMonitoring()" disabled>Stop Monitoring</button>
+        
+        <div id="status" class="status waiting">
+            ⏳ Not connected. Click "Start Monitoring" to begin.
+        </div>
+        
+        <h3>Event Log:</h3>
+        <div id="log"></div>
+    </div>
+
+    <script>
+        let eventSource = null;
+        const statusDiv = document.getElementById('status');
+        const logDiv = document.getElementById('log');
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        
+        function addLog(message, type = 'info') {
+            const timestamp = new Date().toLocaleTimeString();
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            entry.innerHTML = `<strong>[${timestamp}]</strong> ${message}`;
+            logDiv.insertBefore(entry, logDiv.firstChild);
+        }
+        
+        function updateStatus(message, className) {
+            statusDiv.textContent = message;
+            statusDiv.className = 'status ' + className;
+        }
+        
+        function startMonitoring() {
+            const sessionId = document.getElementById('sessionId').value;
+            
+            if (!sessionId) {
+                alert('Please enter a session ID');
+                return;
+            }
+            
+            // Close existing connection
+            if (eventSource) {
+                eventSource.close();
+            }
+            
+            const url = `http://localhost:5000/chat/stream/${sessionId}`;
+            addLog(`Connecting to: ${url}`, 'info');
+            
+            eventSource = new EventSource(url);
+            
+            eventSource.addEventListener('open', () => {
+                addLog('✅ Connection opened', 'success');
+                updateStatus('🟢 Connected - Monitoring payment status...', 'connected');
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+            });
+            
+            eventSource.addEventListener('message', (event) => {
+                const data = JSON.parse(event.data);
+                addLog(`Event received: ${JSON.stringify(data, null, 2)}`, 'info');
+                
+                switch (data.type) {
+                    case 'connected':
+                        addLog(`📡 ${data.message}`, 'success');
+                        break;
+                    
+                    case 'payment_status':
+                        if (data.complete && data.status === 'Paid') {
+                            addLog(`🎉 PAYMENT SUCCESSFUL! ${data.message}`, 'success');
+                            updateStatus(`🎉 ${data.message}`, 'payment-success');
+                            
+                            // Show browser notification
+                            if (Notification.permission === 'granted') {
+                                new Notification('Payment Successful!', {
+                                    body: data.message,
+                                    icon: '✅'
+                                });
+                            }
+                        } else if (data.status === 'Failed') {
+                            addLog(`❌ PAYMENT FAILED! ${data.message}`, 'error');
+                            updateStatus(`❌ ${data.message}`, 'payment-failed');
+                        } else {
+                            addLog(`Payment Status: ${data.status}`, 'info');
+                            updateStatus(`Payment Status: ${data.status}`, 'waiting');
+                        }
+                        break;
+                    
+                    case 'heartbeat':
+                        addLog(`💓 Heartbeat (check #${data.count})`, 'info');
+                        break;
+                    
+                    case 'timeout':
+                        addLog(`⏱️ Monitoring timeout: ${data.message}`, 'warning');
+                        updateStatus('⏱️ Monitoring timeout - No payment detected', 'waiting');
+                        stopMonitoring();
+                        break;
+                    
+                    case 'stream_end':
+                        addLog(`✓ ${data.message}`, 'success');
+                        stopMonitoring();
+                        break;
+                    
+                    case 'error':
+                        addLog(`❌ Error: ${data.message}`, 'error');
+                        updateStatus(`❌ Error: ${data.message}`, 'error');
+                        stopMonitoring();
+                        break;
+                }
+            });
+            
+            eventSource.addEventListener('error', (error) => {
+                addLog('❌ Connection error occurred', 'error');
+                console.error('EventSource error:', error);
+                updateStatus('❌ Connection error', 'error');
+                stopMonitoring();
+            });
+        }
+        
+        function stopMonitoring() {
+            if (eventSource) {
+                eventSource.close();
+                eventSource = null;
+                addLog('Connection closed', 'info');
+            }
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+        }
+        
+        // Request notification permission on load
+        if (Notification.permission === 'default') {
+            Notification.requestPermission();
+        }
+        
+        // Auto-stop on page unload
+        window.addEventListener('beforeunload', () => {
+            stopMonitoring();
+        });
+    </script>
+</body>
+</html>
