@@ -251,6 +251,9 @@ class BookingService:
         try:
             booking = self.view_external_booking_by_order_id(order_id, auth_headers)
             
+            # Extract booking ID
+            booking_id = booking.get("_id") or booking.get("bookingId") or booking.get("booking_id")
+            
             # Calculate locally using the policy
             terms = get_cancellation_terms(
                 booking,
@@ -258,6 +261,8 @@ class BookingService:
             )
             
             return {
+                "orderId": order_id,
+                "bookingId": booking_id,  # ADD THIS - critical for cancellation
                 "allowed": terms["allowed"],
                 "reason": terms["reason"],
                 "paidAmount": booking.get("finalAmount", 0),
