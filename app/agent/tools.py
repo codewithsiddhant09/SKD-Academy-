@@ -1101,7 +1101,7 @@ def run_get_bookly_booking(ctx: ToolContext, args: get_bookly_booking) -> dict:
         # Try to find in MongoDB first
         from app.repositories.mongo import get_database
         db = get_database()
-        if db:
+        if db is not None:
             booking_doc = db.bookings.find_one({"orderId": args.order_id})
             if booking_doc:
                 booking_id = str(booking_doc["_id"])

@@ -490,7 +490,7 @@ class BookingService:
         from app.repositories.mongo import get_database
         db = get_database()
         
-        if db:
+        if db is not None:
             booking_doc = db.bookings.find_one({"orderId": order_id})
             if booking_doc:
                 booking_id = str(booking_doc["_id"])
