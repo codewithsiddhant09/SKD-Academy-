@@ -239,11 +239,21 @@ class quote_booking_cancellation(BaseModel):
 
 
 class cancel_bookly_booking(BaseModel):
-    """Cancels a Bookly booking after showing its quote/details and receiving explicit confirmation."""
+    """Cancels a Bookly booking after showing its quote/details and receiving explicit confirmation.
+    
+    WORKFLOW:
+    1. First call quote_booking_cancellation to show fees and refund amount
+    2. Ask user: "Would you like to proceed with cancellation?" or similar
+    3. Only call this tool AFTER user confirms with "yes", "confirm", "proceed", or similar affirmative response
+    4. IMPORTANT: Set confirmed=True when calling this tool (confirms user gave explicit approval)
+    """
     order_id: str
     reason: str | None = None
     additional_notes: str | None = None
-    confirmed: bool = False
+    confirmed: bool = Field(
+        default=False,
+        description="MUST be True - indicates user has explicitly confirmed they want to cancel after seeing the quote"
+    )
 
 
 class get_bookly_booking(BaseModel):
@@ -1288,10 +1298,8 @@ def run_quote_booking_cancellation(ctx: ToolContext, args: quote_booking_cancell
 
 
 def run_cancel_bookly_booking(ctx: ToolContext, args: cancel_bookly_booking) -> dict:
-    # Auto-confirm cancellation if not explicitly set
     if not args.confirmed:
-        logger.warning(f"⚠️ Auto-confirming cancellation for {args.order_id} (no explicit confirmation required)")
-        args.confirmed = True
+        return {"error": "Show the cancellation quote and ask for explicit confirmation first."}
     quote = ctx.session.cancellation_quote
     if not quote or quote.get("order_id") != args.order_id:
         return {"error": "Fetch and show the cancellation quote before cancelling."}
